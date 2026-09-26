@@ -1,6 +1,6 @@
 # Cantina Escolar
 
-Projeto desenvolvido pelo Time 7 durante o Hackathon.
+Sistema em Java Swing e MySQL desenvolvido pelo Time 7 no Hackathon.
 
 ## Equipe
 
@@ -8,141 +8,171 @@ Projeto desenvolvido pelo Time 7 durante o Hackathon.
 - Augusto Martins
 - Pedro Holler
 
-## Objetivo
-
-Desenvolver um sistema para facilitar e automatizar processos de uma cantina escolar.
-
-
 ## Funcionalidades
 
-- Painel principal para acessar os módulos
-- Gerenciamento de cardápios
-- Controle de produtos disponíveis e esgotados
-- Registro de pedidos antecipados
-- Gerenciamento e retirada de pedidos
-- Cadastro de clientes
-- Edição de clientes
-- Atualização das informações dos clientes
+- cadastro, edição, consulta e exclusão de clientes;
+- cardápios separados por dia da semana;
+- itens disponíveis ou esgotados;
+- registro de compra comum ou pedido antecipado;
+- pagamento e retirada controlados separadamente;
+- histórico de pedidos retirados;
+- persistência no MySQL;
+- aviso por e-mail ao responsável depois que o pedido é gravado.
 
-## Telas disponíveis
+## Regras atuais
 
-- `TelaPrincipal.java`: painel de entrada para clientes, cardápios e pedidos;
-- `TelaClientes.java`: cadastro, edição e exclusão de clientes;
-- `TelaCardapios.java`: criação e edição de cardápios, leitura do JSON e
-  disponibilidade individual de cada item;
-- `TelaPedidos.java`: cadastro e hub dos pedidos ainda não retirados.
+- Pedidos comuns são registrados como pagos e descontam o saldo imediatamente.
+- Pedidos antecipados podem ser registrados como não pagos. Nesse caso, o saldo
+  só é descontado ao confirmar o pagamento.
+- Um pedido só pode ser retirado depois de pago.
+- Um cliente não pode ter dois pedidos ainda não retirados.
+- A compra e o desconto do saldo são confirmados na mesma transação.
+- Apenas itens disponíveis de cardápios disponíveis para o dia atual aparecem
+  em Pedidos. A disponibilidade é validada novamente antes do commit.
+- Quando existem vários cardápios disponíveis para o mesmo dia, os itens de
+  todos eles são combinados.
+- O JSON do cardápio é apenas uma visualização técnica e não pode ser editado.
+- O campo `limitesaldo` continua armazenado, mas ainda não altera compras porque
+  seu significado precisa ser definido pelo responsável pelo projeto.
+- Por enquanto, pedido antecipado significa pedido feito antes da retirada no
+  mesmo dia. Data e horário planejados ainda dependem de decisão de negócio.
 
-A aplicação impede que um cliente tenha dois pedidos ativos ao mesmo tempo.
-Essa regra também está representada no `database/schema.sql` por uma chave
-única gerada para os pedidos com `retirado = false`.
+## Banco de dados
 
-Antes de registrar um pedido, a aplicação verifica o saldo do cliente. O nome
-do cliente é único e é usado como identificação visível; o `idcliente` continua
-existindo internamente para os relacionamentos do banco. Quando o pedido é
-confirmado, seu total é descontado do saldo.
-
-### Navegação pelo teclado
-
-- `Tab` e `Shift+Tab`: avançar e voltar entre campos;
-- `Enter`: ativar o botão principal da tela;
-- `Esc`: fechar uma tela secundária;
-- `Ctrl+1`, `Ctrl+2` e `Ctrl+3`: abrir Clientes, Cardápios e Pedidos;
-- `Ctrl+S`: salvar um cardápio;
-- `Ctrl+N`: iniciar um cardápio novo;
-- `Ctrl+Enter`: registrar um pedido;
-- `Alt` + letra sublinhada: acionar os demais botões.
-
-## Primeira entrega: tela de clientes
-
-A primeira tela funcional foi criada com Java Swing, sem bibliotecas externas.
-Ela permite:
-
-- adicionar clientes;
-- selecionar um cliente na tabela;
-- editar nome do cliente, responsável, saldo, limite, e-mail e alergias;
-- remover um cliente com confirmação;
-- validar os campos obrigatórios, o e-mail e os valores monetários.
-
-Os dados da tela seguem a futura tabela `Cliente`:
-
-```text
-idcliente
-nomecliente
-nomeresponsavel
-saldo
-limitesaldo
-emailresponsavel
-alergias
-```
-
-> Nesta primeira versão, os dados ficam somente na memória e são apagados ao
-> fechar o programa. A camada JDBC já está estruturada, mas a tela ainda não foi
-> ligada ao banco para continuar utilizável durante a configuração do MySQL.
-
-## Banco de dados e DAO
-
-O projeto está preparado para usar **MySQL 8**. O arquivo
-`database/schema.sql` cria as tabelas `cliente`, `cardapio` e `pedido`.
-
-Em `cliente`, os campos monetários foram definidos como:
-
-```sql
-saldo DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-limitesaldo DECIMAL(10,2) NOT NULL DEFAULT 0.00
-```
-
-A estrutura Java da conexão está dividida assim:
-
-```text
-src/br/com/time7/cantina/
-├── dao/
-│   ├── ClienteDAO.java
-│   └── ClienteJdbcDAO.java
-├── infra/
-│   ├── BancoConfig.java
-│   ├── BancoDados.java
-│   ├── CantinaDataSource.java
-│   └── TestarConexao.java
-└── model/
-    └── Cliente.java
-```
-
-As credenciais não ficam salvas no código. Antes de conectar, configure no
-PowerShell:
+O projeto usa MySQL 8. Para uma instalação nova:
 
 ```powershell
-$env:CANTINA_DB_URL="jdbc:mysql://localhost:3306/cantina_escolar?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=America/Sao_Paulo"
+cmd /c "mysql -u root -p < database\schema.sql"
+```
+
+Se o banco já foi criado por uma versão anterior, execute uma vez:
+
+```powershell
+cmd /c "mysql -u root -p < database\migrations\V2__pagamento_email_itens.sql"
+```
+
+A migração adiciona pagamento, resultado do e-mail, dia usado pelo pedido e a
+tabela normalizada de itens. Ela não apaga os dados existentes. Pedidos antigos
+são marcados como pagos, porque a versão anterior debitava o saldo no cadastro,
+e seus itens válidos são copiados do JSON para a nova tabela. Se já existirem
+dois pedidos não retirados para o mesmo cliente, conclua um deles antes da
+migração; a restrição de integridade interrompe a execução sem apagar pedidos.
+
+Configure a conexão na sessão atual do PowerShell:
+
+```powershell
+$env:CANTINA_DB_URL="jdbc:mysql://192.168.20.5:3306/cantina_escolar?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=America/Sao_Paulo"
 $env:CANTINA_DB_USER="root"
 $env:CANTINA_DB_PASSWORD="SUA_SENHA"
 ```
 
-O driver MySQL Connector/J está declarado no `pom.xml`. É necessário ter o
-Maven instalado ou configurar a dependência pelo VS Code antes de executar o
-teste de conexão.
+Nunca salve senha no código, README ou GitHub.
 
-O `schema.sql` prepara uma instalação nova. Como usa `CREATE TABLE IF NOT EXISTS`,
-executá-lo novamente não modifica tabelas antigas; mudanças futuras na estrutura
-deverão ser aplicadas por arquivos de migração próprios.
+## E-mail
 
-## Verificações automáticas
-
-Os testes simples da pasta `tests` não dependem de bibliotecas externas. Eles
-conferem valores compatíveis com `DECIMAL(10,2)`, leitura das configurações e a
-importação completa do JSON do cardápio. A importação rejeita o documento inteiro
-quando qualquer item é inválido, sem apagar os itens que já estavam na tela.
-
-## Como executar no VS Code
-
-1. Instale um JDK 8 ou mais recente e a extensão **Extension Pack for Java**.
-2. Abra a pasta deste projeto no VS Code.
-3. Abra o arquivo `src/TelaPrincipal.java`.
-4. Clique em **Run**, exibido acima do método `main`.
-
-Também é possível compilar pelo terminal:
+O envio usa SMTP por meio do JavaMail, sem gravar credenciais no projeto:
 
 ```powershell
-New-Item -ItemType Directory -Force out
-$fontes = Get-ChildItem src -Recurse -Filter *.java
-javac -d out $fontes.FullName
-java -cp out TelaPrincipal
+$env:CANTINA_EMAIL_SMTP_HOST="smtp.seuprovedor.com"
+$env:CANTINA_EMAIL_SMTP_PORT="587"
+$env:CANTINA_EMAIL_SMTP_USER="usuario@exemplo.com"
+$env:CANTINA_EMAIL_SMTP_PASSWORD="SUA_SENHA_OU_SENHA_DE_APP"
+$env:CANTINA_EMAIL_FROM="Cantina Escolar <usuario@exemplo.com>"
+$env:CANTINA_EMAIL_SMTP_TLS="true"
 ```
+
+O pedido é gravado antes do envio. Se o e-mail falhar, o pedido e o débito não
+são repetidos: a falha fica registrada e a tela permite tentar o envio novamente.
+O aviso contém cliente, itens, quantidades, valores, total, saldo restante e
+data/hora. A senha SMTP nunca deve ser salva em arquivo ou commit.
+
+## Compilar e executar
+
+Pré-requisitos: JDK 8 ou superior, Maven e MySQL 8.
+
+No Windows, a forma mais simples é executar na raiz do projeto:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\iniciar.ps1
+```
+
+O script solicita a senha sem exibi-la, compila, conclui a migração pendente e
+abre o sistema. A senha fica somente no processo atual.
+
+Também é possível executar manualmente:
+
+```powershell
+mvn clean compile
+mvn exec:java "-Dexec.mainClass=TelaPrincipal"
+```
+
+A aplicação testa a conexão ao iniciar e mostra uma mensagem clara se o banco
+não estiver disponível. Ela também detecta e conclui automaticamente a migração
+V2, inclusive quando uma tentativa anterior adicionou somente parte das colunas.
+Nenhuma tabela ou registro existente é apagado nesse processo.
+
+## Testes
+
+Compile os testes:
+
+```powershell
+mvn test-compile
+```
+
+Execute os testes locais, que não usam banco nem servidor de e-mail real:
+
+```powershell
+$testes = @("ValoresMonetariosTest", "CardapioJsonTest", "PedidoRegrasTest", "BancoConfigTest", "ServicoEmailTest")
+foreach ($teste in $testes) {
+    mvn -q exec:java "-Dexec.mainClass=$teste" "-Dexec.classpathScope=test"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+```
+
+O teste completo de persistência usa o MySQL configurado acima. Use somente um
+banco de teste já criado e migrado:
+
+```powershell
+$env:CANTINA_TEST_DB="1"
+mvn -q exec:java "-Dexec.mainClass=FluxoPersistenciaTest" "-Dexec.classpathScope=test"
+```
+
+Sem `CANTINA_TEST_DB=1`, esse teste é ignorado para não alterar dados por
+acidente.
+
+## Estrutura principal
+
+```text
+database/
+├── schema.sql
+└── migrations/
+    └── V2__pagamento_email_itens.sql
+src/
+├── BancoAplicacao.java
+├── CardapioDAO.java
+├── CardapioJdbcDAO.java
+├── EmailCompra.java
+├── MigradorBanco.java
+├── PedidoDAO.java
+├── PedidoJdbcDAO.java
+├── ServicoEmail.java
+├── ServicoEmailSmtp.java
+├── TelaPrincipal.java
+├── TelaClientes.java
+├── TelaCardapios.java
+└── TelaPedidos.java
+tests/
+├── BancoConfigTest.java
+├── CardapioJsonTest.java
+├── PedidoRegrasTest.java
+├── ServicoEmailTest.java
+├── ValoresMonetariosTest.java
+└── FluxoPersistenciaTest.java
+```
+
+## Extensões fora do escopo atual
+
+- alerta visível de alergias durante a compra;
+- cancelamento com devolução automática do saldo;
+- estoque por quantidade;
+- data e horário planejados para pedidos de outro dia.

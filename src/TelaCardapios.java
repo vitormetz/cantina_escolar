@@ -42,9 +42,7 @@ import java.util.Locale;
  * JSON, cada item também possui sua própria disponibilidade.
  */
 public class TelaCardapios extends JFrame {
-    private static final List<Cardapio> CARDAPIOS = new ArrayList<Cardapio>();
-    private static int proximoId = 1;
-
+    private final List<Cardapio> cardapios = new ArrayList<Cardapio>();
     private final List<ItemCardapio> itensEmEdicao = new ArrayList<ItemCardapio>();
     private final NumberFormat formatoMoeda = NumberFormat.getCurrencyInstance(
             new Locale.Builder().setLanguage("pt").setRegion("BR").build());
@@ -200,6 +198,8 @@ public class TelaCardapios extends JFrame {
         campoJson = new JTextArea(6, 40);
         campoJson.setLineWrap(true);
         campoJson.setWrapStyleWord(true);
+        campoJson.setEditable(false);
+        campoJson.setBackground(new Color(245, 247, 250));
         campoJson.setFocusTraversalKeys(
                 KeyboardFocusManager.FORWARD_TRAVERSAL_KEYS,
                 KeyboardFocusManager.getCurrentKeyboardFocusManager()
@@ -212,11 +212,6 @@ public class TelaCardapios extends JFrame {
                                 KeyboardFocusManager.BACKWARD_TRAVERSAL_KEYS));
         painel.add(new JScrollPane(campoJson), BorderLayout.CENTER);
 
-        JButton carregar = new JButton("Carregar itens deste JSON");
-        carregar.addActionListener(evento -> carregarItensDoJson());
-        JPanel botoes = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        botoes.add(carregar);
-        painel.add(botoes, BorderLayout.SOUTH);
         return painel;
     }
 
@@ -241,7 +236,6 @@ public class TelaCardapios extends JFrame {
     }
 
     private void adicionarItem() {
-        if (!verificarJsonCarregado()) return;
         ItemCardapio item = lerItemDoFormulario();
         if (item != null) {
             itensEmEdicao.add(item);
@@ -251,7 +245,6 @@ public class TelaCardapios extends JFrame {
     }
 
     private void editarItem() {
-        if (!verificarJsonCarregado()) return;
         int linha = tabelaItens.getSelectedRow();
         if (linha < 0) {
             avisar("Selecione um item para editar.");
@@ -266,7 +259,6 @@ public class TelaCardapios extends JFrame {
     }
 
     private void alternarDisponibilidadeItem() {
-        if (!verificarJsonCarregado()) return;
         int linha = tabelaItens.getSelectedRow();
         if (linha < 0) {
             avisar("Selecione um item para alterar sua disponibilidade.");
@@ -279,7 +271,6 @@ public class TelaCardapios extends JFrame {
     }
 
     private void removerItem() {
-        if (!verificarJsonCarregado()) return;
         int linha = tabelaItens.getSelectedRow();
         if (linha < 0) {
             avisar("Selecione um item para remover.");
@@ -309,29 +300,20 @@ public class TelaCardapios extends JFrame {
     }
 
     private void salvarCardapio() {
-        // O texto pode ter sido editado diretamente; salvar não deve ignorar essas alterações.
-        if (!verificarJsonCarregado()) return;
         if (itensEmEdicao.isEmpty()) {
             avisar("Adicione pelo menos um item ao cardápio.");
             return;
         }
-        Cardapio salvo = new Cardapio(
-                idCardapioEmEdicao == 0 ? proximoId++ : idCardapioEmEdicao,
-                campoDiaSemana.getSelectedIndex() + 1,
-                campoCardapioDisponivel.isSelected(),
-                copiarItens(itensEmEdicao));
-
-        synchronized (CARDAPIOS) {
-            int indice = indiceCardapioPorId(salvo.getIdCardapio());
-            if (indice >= 0) {
-                CARDAPIOS.set(indice, salvo);
-            } else {
-                CARDAPIOS.add(salvo);
-            }
+        try {
+            Cardapio salvo = BancoAplicacao.salvarCardapio(idCardapioEmEdicao,
+                    campoDiaSemana.getSelectedIndex() + 1,
+                    campoCardapioDisponivel.isSelected(), copiarItens(itensEmEdicao));
+            idCardapioEmEdicao = salvo.getIdCardapio();
+            atualizarSeletorCardapios(idCardapioEmEdicao);
+            JOptionPane.showMessageDialog(this, "Cardápio salvo com sucesso!");
+        } catch (RuntimeException erro) {
+            avisar(erro.getMessage());
         }
-        idCardapioEmEdicao = salvo.getIdCardapio();
-        atualizarSeletorCardapios(idCardapioEmEdicao);
-        JOptionPane.showMessageDialog(this, "Cardápio salvo com sucesso!");
     }
 
     private void excluirCardapio() {
@@ -343,14 +325,13 @@ public class TelaCardapios extends JFrame {
                 this, "Excluir este cardápio?", "Confirmar",
                 JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (resposta == JOptionPane.YES_OPTION) {
-            synchronized (CARDAPIOS) {
-                int indice = indiceCardapioPorId(idCardapioEmEdicao);
-                if (indice >= 0) {
-                    CARDAPIOS.remove(indice);
-                }
+            try {
+                BancoAplicacao.excluirCardapio(idCardapioEmEdicao);
+                atualizarSeletorCardapios(0);
+                novoCardapio();
+            } catch (RuntimeException erro) {
+                avisar(erro.getMessage());
             }
-            atualizarSeletorCardapios(0);
-            novoCardapio();
         }
     }
 
@@ -381,13 +362,13 @@ public class TelaCardapios extends JFrame {
     private void atualizarSeletorCardapios(int idSelecionado) {
         atualizandoSeletor = true;
         seletorCardapio.removeAllItems();
+        cardapios.clear();
+        cardapios.addAll(BancoAplicacao.listarCardapios());
         Cardapio paraSelecionar = null;
-        synchronized (CARDAPIOS) {
-            for (Cardapio cardapio : CARDAPIOS) {
-                seletorCardapio.addItem(cardapio);
-                if (cardapio.getIdCardapio() == idSelecionado) {
-                    paraSelecionar = cardapio;
-                }
+        for (Cardapio cardapio : cardapios) {
+            seletorCardapio.addItem(cardapio);
+            if (cardapio.getIdCardapio() == idSelecionado) {
+                paraSelecionar = cardapio;
             }
         }
         seletorCardapio.setSelectedItem(paraSelecionar);
@@ -422,59 +403,13 @@ public class TelaCardapios extends JFrame {
         tabelaItens.clearSelection();
     }
 
-    /** A lista atual só muda depois de validar o documento completo. */
-    private void carregarItensDoJson() {
-        try {
-            List<ItemCardapio> carregados = CardapioJson.ler(campoJson.getText());
-            if (carregados.isEmpty()) {
-                avisar("O JSON precisa conter pelo menos um item.");
-                return;
-            }
-            itensEmEdicao.clear();
-            itensEmEdicao.addAll(carregados);
-            limparFormularioItem();
-            atualizarTabelaEJson();
-        } catch (IllegalArgumentException excecao) {
-            avisar("JSON inválido: " + excecao.getMessage());
-        }
-    }
-
-    private boolean verificarJsonCarregado() {
-        if (!campoJson.getText().trim().equals(CardapioJson.gerar(itensEmEdicao))) {
-            avisar("O JSON foi alterado. Clique em 'Carregar itens deste JSON' antes de salvar ou editar os itens.");
-            return false;
-        }
-        return true;
-    }
-
     private List<ItemCardapio> copiarItens(List<ItemCardapio> origem) {
         return new ArrayList<ItemCardapio>(origem);
     }
 
-    private int indiceCardapioPorId(int id) {
-        for (int i = 0; i < CARDAPIOS.size(); i++) {
-            if (CARDAPIOS.get(i).getIdCardapio() == id) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     /** Entrega à tela de pedidos somente os itens realmente disponíveis. */
-    public static List<ItemCardapio> listarItensDisponiveis() {
-        List<ItemCardapio> disponiveis = new ArrayList<ItemCardapio>();
-        synchronized (CARDAPIOS) {
-            for (Cardapio cardapio : CARDAPIOS) {
-                if (cardapio.isDisponivel()) {
-                    for (ItemCardapio item : cardapio.getItens()) {
-                        if (item.isDisponivel()) {
-                            disponiveis.add(item);
-                        }
-                    }
-                }
-            }
-        }
-        return disponiveis;
+    public static List<ItemCardapio> listarItensDisponiveis(int diaSemana) {
+        return BancoAplicacao.listarItensDisponiveis(diaSemana);
     }
 
     private GridBagConstraints posicao(int coluna, int linha) {
@@ -514,16 +449,23 @@ public class TelaCardapios extends JFrame {
     }
 
     public static class ItemCardapio {
+        private final int idCardapio;
         private final String nome;
         private final BigDecimal preco;
         private final boolean disponivel;
 
         public ItemCardapio(String nome, BigDecimal preco, boolean disponivel) {
+            this(0, nome, preco, disponivel);
+        }
+
+        public ItemCardapio(int idCardapio, String nome, BigDecimal preco, boolean disponivel) {
+            this.idCardapio = idCardapio;
             this.nome = nome;
             this.preco = preco;
             this.disponivel = disponivel;
         }
 
+        public int getIdCardapio() { return idCardapio; }
         public String getNome() { return nome; }
         public BigDecimal getPreco() { return preco; }
         public boolean isDisponivel() { return disponivel; }
@@ -534,23 +476,23 @@ public class TelaCardapios extends JFrame {
         }
     }
 
-    private static class Cardapio {
+    static class Cardapio {
         private final int idCardapio;
         private final int diaSemana;
         private final boolean disponivel;
         private final List<ItemCardapio> itens;
 
-        private Cardapio(int id, int dia, boolean disponivel, List<ItemCardapio> itens) {
+        Cardapio(int id, int dia, boolean disponivel, List<ItemCardapio> itens) {
             this.idCardapio = id;
             this.diaSemana = dia;
             this.disponivel = disponivel;
             this.itens = itens;
         }
 
-        private int getIdCardapio() { return idCardapio; }
-        private int getDiaSemana() { return diaSemana; }
-        private boolean isDisponivel() { return disponivel; }
-        private List<ItemCardapio> getItens() { return itens; }
+        int getIdCardapio() { return idCardapio; }
+        int getDiaSemana() { return diaSemana; }
+        boolean isDisponivel() { return disponivel; }
+        List<ItemCardapio> getItens() { return itens; }
 
         @Override
         public String toString() {

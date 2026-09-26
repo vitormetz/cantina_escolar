@@ -11,3 +11,8 @@ target/
 .vscode/
 .idea/
 
+# Credenciais e configurações locais
+.env
+.env.*
+!.env.example
+config.local.*

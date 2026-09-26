@@ -41,17 +41,14 @@ import java.util.Locale;
 /**
  * Tela de clientes da Cantina Escolar.
  *
- * Os nomes e tipos dos dados desta tela seguem a futura tabela Cliente:
+ * Os nomes e tipos dos dados desta tela seguem a tabela cliente:
  * idcliente, nomecliente, nomeresponsavel, saldo, limitesaldo,
  * emailresponsavel e alergias.
- *
- * Por enquanto, os registros ficam em uma lista na memória. Quando o banco de
- * dados for conectado, a interface poderá continuar praticamente igual: será
- * necessário trocar as operações na lista por INSERT, UPDATE, SELECT e DELETE.
+ * Todos os registros são lidos e gravados no MySQL.
  */
 public class TelaClientes extends JFrame {
 
-    // Campos correspondentes às colunas da futura tabela Cliente.
+    // Campos correspondentes às colunas da tabela cliente.
     private JTextField campoNomeCliente;
     private JTextField campoNomeResponsavel;
     private JTextField campoSaldo;
@@ -64,12 +61,6 @@ public class TelaClientes extends JFrame {
     // A seleção aponta para o registro exibido, nunca para uma posição de outra janela.
     private final List<Cliente> clientesVisiveis = new ArrayList<Cliente>();
     private boolean atualizandoTabela;
-
-    // Simula a coleção de clientes que futuramente virá do banco de dados.
-    private static final List<Cliente> CLIENTES = new ArrayList<Cliente>();
-
-    // Simula um ID gerado automaticamente pelo banco (AUTO_INCREMENT).
-    private static int proximoId = 1;
 
     // Formata valores como R$ 10,00 somente para exibição na tabela.
     private final NumberFormat formatoMoeda =
@@ -281,9 +272,9 @@ public class TelaClientes extends JFrame {
         return botoes;
     }
 
-    /** Adiciona um cliente à lista e atualiza a tabela. */
+    /** Persiste um cliente e atualiza a tabela. */
     private void adicionarCliente() {
-        Cliente novoCliente = lerClienteDoFormulario(proximoId);
+        Cliente novoCliente = lerClienteDoFormulario(0);
         if (novoCliente == null) {
             return;
         }
@@ -293,9 +284,11 @@ public class TelaClientes extends JFrame {
             return;
         }
 
-        synchronized (CLIENTES) {
-            CLIENTES.add(novoCliente);
-            proximoId++;
+        try {
+            BancoAplicacao.inserirCliente(novoCliente);
+        } catch (RuntimeException erro) {
+            mostrarAviso(erro.getMessage());
+            return;
         }
         atualizarTabela();
         limparFormulario();
@@ -329,15 +322,11 @@ public class TelaClientes extends JFrame {
             return;
         }
 
-        synchronized (CLIENTES) {
-            // Um pedido pode ter descontado o saldo depois que o formulário foi preenchido.
-            // Não sobrescrevemos esse débito com os dados antigos da tela.
-            if (buscarClientePorId(idAtual) != original) {
-                atualizarTabela();
-                mostrarAviso("Os dados deste cliente mudaram. Confira os valores e edite novamente.");
-                return;
-            }
-            CLIENTES.set(CLIENTES.indexOf(original), clienteEditado);
+        try {
+            BancoAplicacao.atualizarCliente(clienteEditado, original.getSaldo());
+        } catch (RuntimeException erro) {
+            mostrarAviso(erro.getMessage());
+            return;
         }
         atualizarTabela();
         limparFormulario();
@@ -375,9 +364,11 @@ public class TelaClientes extends JFrame {
                 mostrarAviso("Este cliente possui pedidos registrados e não pode ser excluído.");
                 return;
             }
-            synchronized (CLIENTES) {
-                Cliente atual = buscarClientePorId(cliente.getIdCliente());
-                if (atual != null) CLIENTES.remove(atual);
+            try {
+                BancoAplicacao.excluirCliente(cliente.getIdCliente());
+            } catch (RuntimeException erro) {
+                mostrarAviso(erro.getMessage());
+                return;
             }
             atualizarTabela();
             limparFormulario();
@@ -439,7 +430,7 @@ public class TelaClientes extends JFrame {
         return ValoresMonetarios.converter(texto, nomeCampo);
     }
 
-    /** Recria as linhas da tabela a partir da lista de objetos Cliente. */
+    /** Recria as linhas da tabela a partir dos clientes persistidos. */
     private void atualizarTabela() {
         List<Cliente> atuais = listarClientes();
         // Voltar de uma mensagem não deve apagar a seleção nem a edição em andamento.
@@ -536,54 +527,18 @@ public class TelaClientes extends JFrame {
 
     /** Retorna uma cópia para preencher o seletor da tela de pedidos. */
     public static List<Cliente> listarClientes() {
-        synchronized (CLIENTES) {
-            return new ArrayList<Cliente>(CLIENTES);
-        }
-    }
-
-    /**
-     * Desconta pelo ID estável; o nome continua sendo a identificação visível.
-     * Retorna false se o cliente não existir ou não possuir saldo suficiente.
-     */
-    public static boolean debitarSaldo(int idCliente, BigDecimal valor) {
-        valor = ValoresMonetarios.validar(valor, "Total do pedido");
-        if (valor.signum() <= 0) return false;
-        synchronized (CLIENTES) {
-            for (int i = 0; i < CLIENTES.size(); i++) {
-                Cliente atual = CLIENTES.get(i);
-                if (atual.getIdCliente() == idCliente
-                        && atual.getSaldo().compareTo(valor) >= 0) {
-                    CLIENTES.set(i, new Cliente(
-                            atual.getIdCliente(),
-                            atual.getNomeCliente(),
-                            atual.getNomeResponsavel(),
-                            atual.getSaldo().subtract(valor),
-                            atual.getLimiteSaldo(),
-                            atual.getEmailResponsavel(),
-                            atual.getAlergias()));
-                    return true;
-                }
-            }
-        }
-        return false;
+        return BancoAplicacao.listarClientes();
     }
 
     public static Cliente buscarClientePorId(int idCliente) {
-        synchronized (CLIENTES) {
-            for (Cliente cliente : CLIENTES) {
-                if (cliente.getIdCliente() == idCliente) return cliente;
-            }
-        }
-        return null;
+        return BancoAplicacao.buscarCliente(idCliente);
     }
 
     private boolean nomeJaExiste(String nome, int idIgnorado) {
-        synchronized (CLIENTES) {
-            for (Cliente cliente : CLIENTES) {
-                if (cliente.getIdCliente() != idIgnorado
-                        && cliente.getNomeCliente().equalsIgnoreCase(nome)) {
-                    return true;
-                }
+        for (Cliente cliente : listarClientes()) {
+            if (cliente.getIdCliente() != idIgnorado
+                    && cliente.getNomeCliente().equalsIgnoreCase(nome)) {
+                return true;
             }
         }
         return false;

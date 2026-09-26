@@ -5,6 +5,7 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -13,7 +14,6 @@ import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
-import javax.swing.JComponent;
 import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.SpinnerNumberModel;
@@ -30,23 +30,15 @@ import java.awt.event.WindowEvent;
 import java.math.BigDecimal;
 import java.text.NumberFormat;
 import java.text.ParseException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * Hub dos pedidos ainda não retirados.
- *
- * Os campos seguem a tabela pedido: idpedido, datapedido, itempedido em JSON,
- * antecipado, idcliente e retirado. A regra de apenas um pedido ativo por
- * cliente é verificada antes de cada cadastro.
- */
+/** Compra, pagamento, preparação e histórico dos pedidos persistidos. */
 public class TelaPedidos extends JFrame {
-    private static final List<Pedido> PEDIDOS = new ArrayList<Pedido>();
-    private static int proximoId = 1;
-
     private final List<ItemPedido> itensDoNovoPedido = new ArrayList<ItemPedido>();
     private final List<Pedido> pedidosVisiveis = new ArrayList<Pedido>();
     private final NumberFormat formatoMoeda = NumberFormat.getCurrencyInstance(
@@ -55,20 +47,22 @@ public class TelaPedidos extends JFrame {
 
     private JComboBox<Cliente> seletorCliente;
     private JLabel rotuloSaldoCliente;
-    private JLabel rotuloTotal;
+    private JLabel rotuloDia;
     private JCheckBox campoAntecipado;
+    private JCheckBox campoPago;
     private JComboBox<TelaCardapios.ItemCardapio> seletorItem;
     private JSpinner campoQuantidade;
     private JTable tabelaNovoPedido;
     private DefaultTableModel modeloNovoPedido;
-    private JTable tabelaPendentes;
-    private DefaultTableModel modeloPendentes;
+    private JLabel rotuloTotal;
+    private JTable tabelaPedidos;
+    private DefaultTableModel modeloPedidos;
 
     public TelaPedidos() {
-        setTitle("Cantina Escolar - Pedidos pendentes");
+        setTitle("Cantina Escolar - Pedidos");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setSize(1120, 720);
-        setMinimumSize(new java.awt.Dimension(950, 620));
+        setSize(1240, 760);
+        setMinimumSize(new java.awt.Dimension(1020, 650));
         setLocationRelativeTo(null);
         montarInterface();
         atualizarClientes();
@@ -76,13 +70,10 @@ public class TelaPedidos extends JFrame {
         atualizarHub();
         configurarAtalhos();
 
-        // Recarrega o cardápio quando a pessoa volta para esta janela.
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowActivated(WindowEvent evento) {
-                atualizarClientes();
-                atualizarItensDisponiveis();
-                atualizarHub();
+                atualizarTudo();
             }
         });
     }
@@ -93,13 +84,13 @@ public class TelaPedidos extends JFrame {
         principal.setBackground(new Color(245, 247, 250));
         setContentPane(principal);
 
-        JLabel titulo = new JLabel("Hub de pedidos para preparar");
+        JLabel titulo = new JLabel("Compras, preparação e retiradas");
         titulo.setFont(new Font("SansSerif", Font.BOLD, 25));
         titulo.setForeground(new Color(32, 45, 64));
         principal.add(titulo, BorderLayout.NORTH);
 
         JSplitPane divisao = new JSplitPane(
-                JSplitPane.VERTICAL_SPLIT, criarNovoPedido(), criarHubPendentes());
+                JSplitPane.VERTICAL_SPLIT, criarNovoPedido(), criarHubPedidos());
         divisao.setResizeWeight(0.48);
         divisao.setBorder(null);
         principal.add(divisao, BorderLayout.CENTER);
@@ -107,7 +98,7 @@ public class TelaPedidos extends JFrame {
 
     private JPanel criarNovoPedido() {
         JPanel painel = new JPanel(new BorderLayout(8, 8));
-        painel.setBorder(BorderFactory.createTitledBorder("Registrar novo pedido"));
+        painel.setBorder(BorderFactory.createTitledBorder("Registrar compra ou pedido"));
 
         JPanel cliente = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
         seletorCliente = new JComboBox<Cliente>();
@@ -115,12 +106,19 @@ public class TelaPedidos extends JFrame {
                 0, "Nome de cliente relativamente longo", "",
                 BigDecimal.ZERO, BigDecimal.ZERO, "", ""));
         rotuloSaldoCliente = new JLabel("Saldo: R$ 0,00");
+        rotuloDia = new JLabel();
         campoAntecipado = new JCheckBox("Pedido antecipado");
+        campoPago = new JCheckBox("Pago", true);
+        campoPago.setEnabled(false);
         cliente.add(new JLabel("Cliente *"));
         cliente.add(seletorCliente);
         cliente.add(rotuloSaldoCliente);
+        cliente.add(rotuloDia);
         cliente.add(campoAntecipado);
+        cliente.add(campoPago);
+
         seletorCliente.addActionListener(evento -> atualizarSaldoClienteSelecionado());
+        campoAntecipado.addActionListener(evento -> atualizarRegraPagamento());
         painel.add(cliente, BorderLayout.NORTH);
 
         JPanel itens = new JPanel(new BorderLayout(6, 6));
@@ -154,18 +152,14 @@ public class TelaPedidos extends JFrame {
         itens.add(new JScrollPane(tabelaNovoPedido), BorderLayout.CENTER);
 
         JPanel botoes = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 3));
-        rotuloTotal = new JLabel("Total: " + formatoMoeda.format(BigDecimal.ZERO));
-        botoes.add(rotuloTotal);
+        rotuloTotal = new JLabel("Total: R$ 0,00");
         JButton removerItem = new JButton("Remover item");
         JButton limpar = new JButton("Limpar pedido");
-        JButton registrar = new JButton("Registrar pedido");
-        removerItem.setMnemonic(KeyEvent.VK_R);
-        limpar.setMnemonic(KeyEvent.VK_L);
-        registrar.setMnemonic(KeyEvent.VK_P);
-        registrar.setToolTipText("Registrar pedido (Alt+P ou Ctrl+Enter)");
+        JButton registrar = new JButton("Registrar");
         removerItem.addActionListener(evento -> removerItemDoPedido());
         limpar.addActionListener(evento -> limparNovoPedido());
         registrar.addActionListener(evento -> registrarPedido());
+        botoes.add(rotuloTotal);
         botoes.add(removerItem);
         botoes.add(limpar);
         botoes.add(registrar);
@@ -175,59 +169,73 @@ public class TelaPedidos extends JFrame {
         return painel;
     }
 
-    private JPanel criarHubPendentes() {
+    private JPanel criarHubPedidos() {
         JPanel painel = new JPanel(new BorderLayout(8, 8));
         painel.setBorder(BorderFactory.createTitledBorder(
-                "Pedidos não retirados — devem ser preparados"));
+                "Pedidos ativos e histórico de retiradas"));
 
-        modeloPendentes = new DefaultTableModel(
-                new String[] {"Pedido", "Data", "Cliente", "Itens", "Total", "Antecipado"}, 0) {
+        modeloPedidos = new DefaultTableModel(new String[] {
+                "Pedido", "Data", "Cliente", "Itens", "Total",
+                "Antecipado", "Pago", "Retirado", "E-mail"
+        }, 0) {
             @Override
             public boolean isCellEditable(int linha, int coluna) { return false; }
         };
-        tabelaPendentes = new JTable(modeloPendentes);
-        tabelaPendentes.setRowHeight(28);
-        tabelaPendentes.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        painel.add(new JScrollPane(tabelaPendentes), BorderLayout.CENTER);
+        tabelaPedidos = new JTable(modeloPedidos);
+        tabelaPedidos.setRowHeight(28);
+        tabelaPedidos.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        painel.add(new JScrollPane(tabelaPedidos), BorderLayout.CENTER);
 
-        JButton concluir = new JButton("Marcar como retirado / concluído");
-        concluir.setMnemonic(KeyEvent.VK_C);
+        JButton atualizar = new JButton("Atualizar");
+        JButton reenviar = new JButton("Reenviar e-mail");
+        JButton pagar = new JButton("Confirmar pagamento");
+        JButton concluir = new JButton("Confirmar retirada");
+        atualizar.addActionListener(evento -> atualizarTudo());
+        reenviar.addActionListener(evento -> reenviarEmail());
+        pagar.addActionListener(evento -> confirmarPagamento());
         concluir.addActionListener(evento -> concluirPedido());
         JPanel botoes = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        botoes.add(atualizar);
+        botoes.add(reenviar);
+        botoes.add(pagar);
         botoes.add(concluir);
         painel.add(botoes, BorderLayout.SOUTH);
         return painel;
     }
 
+    private int diaDoPedido() {
+        return LocalDate.now().getDayOfWeek().getValue();
+    }
+
+    private void atualizarTudo() {
+        try {
+            atualizarClientes();
+            atualizarItensDisponiveis();
+            atualizarHub();
+        } catch (RuntimeException erro) {
+            avisar(erro.getMessage());
+        }
+    }
+
     private void atualizarItensDisponiveis() {
         Object selecionado = seletorItem.getSelectedItem();
         seletorItem.removeAllItems();
-        for (TelaCardapios.ItemCardapio item : TelaCardapios.listarItensDisponiveis()) {
+        int dia = diaDoPedido();
+        rotuloDia.setText("Cardápio: " + nomeDia(dia));
+        for (TelaCardapios.ItemCardapio item : TelaCardapios.listarItensDisponiveis(dia)) {
             seletorItem.addItem(item);
         }
-        // Na primeira carga, mantém o primeiro item; uma seleção removida vira vazia.
-        if (selecionado != null) {
-            seletorItem.setSelectedItem(null);
-            for (int i = 0; i < seletorItem.getItemCount(); i++) {
-                if (seletorItem.getItemAt(i) == selecionado) {
-                    seletorItem.setSelectedIndex(i);
-                    break;
-                }
-            }
-        }
+        seletorItem.setSelectedItem(selecionado);
     }
 
     private void atualizarClientes() {
         Cliente selecionado = (Cliente) seletorCliente.getSelectedItem();
-        Cliente paraSelecionar = null;
+        int idSelecionado = selecionado == null ? 0 : selecionado.getIdCliente();
         seletorCliente.removeAllItems();
         for (Cliente cliente : TelaClientes.listarClientes()) {
             seletorCliente.addItem(cliente);
-            if (selecionado != null && cliente.getIdCliente() == selecionado.getIdCliente()) {
-                paraSelecionar = cliente;
-            }
+            if (cliente.getIdCliente() == idSelecionado) seletorCliente.setSelectedItem(cliente);
         }
-        if (selecionado != null) seletorCliente.setSelectedItem(paraSelecionar);
         atualizarSaldoClienteSelecionado();
     }
 
@@ -238,28 +246,31 @@ public class TelaPedidos extends JFrame {
                 : "Saldo: " + formatoMoeda.format(cliente.getSaldo()));
     }
 
+    private void atualizarRegraPagamento() {
+        if (campoAntecipado.isSelected()) {
+            campoPago.setEnabled(true);
+            campoPago.setSelected(false);
+        } else {
+            campoPago.setSelected(true);
+            campoPago.setEnabled(false);
+        }
+    }
+
     private void adicionarItemAoPedido() {
         TelaCardapios.ItemCardapio item =
                 (TelaCardapios.ItemCardapio) seletorItem.getSelectedItem();
         if (item == null) {
-            avisar("Não há itens disponíveis. Cadastre e salve um cardápio primeiro.");
-            return;
-        }
-        if (!TelaCardapios.listarItensDisponiveis().contains(item)) {
-            atualizarItensDisponiveis();
-            avisar("Este item mudou ou ficou indisponível. Selecione novamente.");
+            avisar("Não há itens disponíveis para o dia atual.");
             return;
         }
         try {
-            // Confirma também a quantidade digitada, sem depender de sair do campo.
             campoQuantidade.commitEdit();
             int quantidade = ((Number) campoQuantidade.getValue()).intValue();
             itensDoNovoPedido.add(new ItemPedido(item, quantidade));
-        } catch (ParseException | IllegalArgumentException excecao) {
+            atualizarTabelaNovoPedido();
+        } catch (ParseException | IllegalArgumentException erro) {
             avisar("Informe uma quantidade inteira entre 1 e 99.");
-            return;
         }
-        atualizarTabelaNovoPedido();
     }
 
     private void removerItemDoPedido() {
@@ -279,93 +290,76 @@ public class TelaPedidos extends JFrame {
             return;
         }
         try {
-            registrarNovoPedido(cliente.getIdCliente(), itensDoNovoPedido, campoAntecipado.isSelected());
-        } catch (IllegalArgumentException excecao) {
-            atualizarClientes();
-            atualizarItensDisponiveis();
-            avisar(excecao.getMessage());
-            return;
-        }
-
-        limparNovoPedido();
-        atualizarClientes();
-        atualizarHub();
-        JOptionPane.showMessageDialog(this, "Pedido registrado e enviado para preparação!");
-    }
-
-    /** Valida tudo antes de debitar. A regra usa o ID mesmo quando o nome é editado. */
-    static Pedido registrarNovoPedido(int idCliente, List<ItemPedido> itens, boolean antecipado) {
-        if (itens == null || itens.isEmpty()) {
-            throw new IllegalArgumentException("Adicione pelo menos um item ao pedido.");
-        }
-        synchronized (PEDIDOS) {
-            Cliente cliente = TelaClientes.buscarClientePorId(idCliente);
-            if (cliente == null) {
-                throw new IllegalArgumentException("O cliente não está mais cadastrado.");
+            Pedido pedido = BancoAplicacao.registrarPedido(cliente.getIdCliente(),
+                    itensDoNovoPedido, campoAntecipado.isSelected(),
+                    campoPago.isSelected(), diaDoPedido());
+            limparNovoPedido();
+            atualizarTudo();
+            if (pedido.isEmailEnviado()) {
+                JOptionPane.showMessageDialog(this,
+                        "Pedido registrado e e-mail enviado ao responsável.");
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "Pedido registrado, mas o e-mail não foi enviado.\n"
+                        + pedido.getEmailErro(),
+                        "Compra salva com aviso", JOptionPane.WARNING_MESSAGE);
             }
-            if (temPedidoPendente(idCliente)) {
-                throw new IllegalArgumentException(
-                        "Este cliente já possui um pedido ativo. Conclua o pedido anterior primeiro.");
-            }
-            List<TelaCardapios.ItemCardapio> disponiveis = TelaCardapios.listarItensDisponiveis();
-            BigDecimal totalPedido = BigDecimal.ZERO;
-            for (ItemPedido item : itens) {
-                // A referência distingue produtos de mesmo nome. Editar preço ou
-                // disponibilidade cria outro item e exige atualizar o carrinho.
-                if (item == null || !disponiveis.contains(item.origem)) {
-                    throw new IllegalArgumentException(
-                            "Um item foi alterado, removido ou ficou indisponível. Remova-o do pedido e selecione novamente.");
-                }
-                totalPedido = totalPedido.add(item.subtotal());
-            }
-            if (cliente.getSaldo().compareTo(totalPedido) < 0) {
-                throw new IllegalArgumentException("Saldo insuficiente. Saldo atual: R$ "
-                        + cliente.getSaldo().toPlainString().replace('.', ',')
-                        + ". Total do pedido: R$ " + totalPedido.toPlainString().replace('.', ',') + ".");
-            }
-            Pedido pedido = new Pedido(proximoId, LocalDateTime.now(), new ArrayList<ItemPedido>(itens),
-                    antecipado, idCliente, cliente.getNomeCliente(), false);
-            if (!TelaClientes.debitarSaldo(idCliente, totalPedido)) {
-                throw new IllegalArgumentException("O saldo mudou. Confira os dados e tente novamente.");
-            }
-            PEDIDOS.add(pedido);
-            proximoId++;
-            return pedido;
+        } catch (RuntimeException erro) {
+            atualizarTudo();
+            avisar(erro.getMessage());
         }
     }
 
-    static boolean temPedidoPendente(int idCliente) {
-        synchronized (PEDIDOS) {
-            for (Pedido pedido : PEDIDOS) {
-                if (pedido.idCliente == idCliente && !pedido.retirado) return true;
-            }
+    private Pedido pedidoSelecionado() {
+        int linha = tabelaPedidos.getSelectedRow();
+        if (linha < 0) {
+            avisar("Selecione um pedido.");
+            return null;
         }
-        return false;
+        return pedidosVisiveis.get(tabelaPedidos.convertRowIndexToModel(linha));
     }
 
-    /** Mantém a mesma proteção da chave estrangeira ON DELETE RESTRICT do banco. */
-    static boolean temPedidosDoCliente(int idCliente) {
-        synchronized (PEDIDOS) {
-            for (Pedido pedido : PEDIDOS) {
-                if (pedido.idCliente == idCliente) return true;
-            }
+    private void confirmarPagamento() {
+        Pedido pedido = pedidoSelecionado();
+        if (pedido == null) return;
+        try {
+            BancoAplicacao.marcarPago(pedido.getIdPedido());
+            atualizarTudo();
+            JOptionPane.showMessageDialog(this, "Pagamento confirmado.");
+        } catch (RuntimeException erro) {
+            avisar(erro.getMessage());
         }
-        return false;
     }
 
     private void concluirPedido() {
-        int linha = tabelaPendentes.getSelectedRow();
-        if (linha < 0) {
-            avisar("Selecione um pedido pendente.");
+        Pedido pedido = pedidoSelecionado();
+        if (pedido == null) return;
+        int resposta = JOptionPane.showConfirmDialog(this,
+                "Confirmar retirada do pedido #" + pedido.getIdPedido() + "?",
+                "Concluir pedido", JOptionPane.YES_NO_OPTION);
+        if (resposta != JOptionPane.YES_OPTION) return;
+        try {
+            BancoAplicacao.marcarRetirado(pedido.getIdPedido());
+            atualizarTudo();
+        } catch (RuntimeException erro) {
+            avisar(erro.getMessage());
+        }
+    }
+
+    private void reenviarEmail() {
+        Pedido pedido = pedidoSelecionado();
+        if (pedido == null) return;
+        if (pedido.isEmailEnviado()) {
+            avisar("O e-mail deste pedido já foi enviado.");
             return;
         }
-        Pedido pedido = pedidosVisiveis.get(linha);
-        int resposta = JOptionPane.showConfirmDialog(
-                this, "Confirmar retirada do pedido #" + pedido.idPedido + "?",
-                "Concluir pedido", JOptionPane.YES_NO_OPTION);
-        if (resposta == JOptionPane.YES_OPTION) {
-            pedido.retirado = true;
-            atualizarHub();
+        try {
+            BancoAplicacao.reenviarEmail(pedido.getIdPedido());
+            atualizarTudo();
+            JOptionPane.showMessageDialog(this, "E-mail enviado ao responsável.");
+        } catch (RuntimeException erro) {
+            atualizarTudo();
+            avisar(erro.getMessage());
         }
     }
 
@@ -381,37 +375,38 @@ public class TelaPedidos extends JFrame {
     }
 
     private void atualizarHub() {
-        int linha = tabelaPendentes.getSelectedRow();
-        Pedido selecionado = linha < 0 ? null : pedidosVisiveis.get(linha);
-        modeloPendentes.setRowCount(0);
+        int idSelecionado = 0;
+        int linha = tabelaPedidos.getSelectedRow();
+        if (linha >= 0 && linha < pedidosVisiveis.size()) {
+            idSelecionado = pedidosVisiveis.get(
+                    tabelaPedidos.convertRowIndexToModel(linha)).getIdPedido();
+        }
+        modeloPedidos.setRowCount(0);
         pedidosVisiveis.clear();
-        synchronized (PEDIDOS) {
-            for (Pedido pedido : PEDIDOS) {
-                if (!pedido.retirado) {
-                    pedidosVisiveis.add(pedido);
-                    modeloPendentes.addRow(new Object[] {
-                            pedido.idPedido,
-                            formatoData.format(pedido.dataPedido),
-                            nomeAtualDoCliente(pedido),
-                            pedido.resumoItens(),
-                            formatoMoeda.format(pedido.total()),
-                            pedido.antecipado ? "Sim" : "Não"
-                    });
-                }
+        pedidosVisiveis.addAll(BancoAplicacao.listarPedidos());
+        for (Pedido pedido : pedidosVisiveis) {
+            modeloPedidos.addRow(new Object[] {
+                    pedido.idPedido, formatoData.format(pedido.dataPedido),
+                    pedido.nomeCliente, pedido.resumoItens(),
+                    formatoMoeda.format(pedido.total()),
+                    pedido.antecipado ? "Sim" : "Não",
+                    pedido.pago ? "Sim" : "Não",
+                    pedido.retirado ? "Sim" : "Não",
+                    pedido.emailEnviado ? "Enviado" : "Pendente"
+            });
+        }
+        for (int i = 0; i < pedidosVisiveis.size(); i++) {
+            if (pedidosVisiveis.get(i).getIdPedido() == idSelecionado) {
+                tabelaPedidos.setRowSelectionInterval(i, i);
+                break;
             }
         }
-        int indice = pedidosVisiveis.indexOf(selecionado);
-        if (indice >= 0) tabelaPendentes.setRowSelectionInterval(indice, indice);
-    }
-
-    private String nomeAtualDoCliente(Pedido pedido) {
-        Cliente cliente = TelaClientes.buscarClientePorId(pedido.idCliente);
-        return cliente == null ? pedido.nomeCliente : cliente.getNomeCliente();
     }
 
     private void limparNovoPedido() {
         seletorCliente.setSelectedItem(null);
         campoAntecipado.setSelected(false);
+        atualizarRegraPagamento();
         campoQuantidade.setValue(1);
         itensDoNovoPedido.clear();
         atualizarTabelaNovoPedido();
@@ -420,9 +415,7 @@ public class TelaPedidos extends JFrame {
 
     private BigDecimal calcularTotalNovoPedido() {
         BigDecimal total = BigDecimal.ZERO;
-        for (ItemPedido item : itensDoNovoPedido) {
-            total = total.add(item.subtotal());
-        }
+        for (ItemPedido item : itensDoNovoPedido) total = total.add(item.subtotal());
         return total;
     }
 
@@ -431,23 +424,28 @@ public class TelaPedidos extends JFrame {
                 .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "fechar");
         getRootPane().getActionMap().put("fechar", new AbstractAction() {
             @Override
-            public void actionPerformed(ActionEvent evento) {
-                dispose();
-            }
+            public void actionPerformed(ActionEvent evento) { dispose(); }
         });
         getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
                 .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, KeyEvent.CTRL_DOWN_MASK),
                         "registrarPedido");
         getRootPane().getActionMap().put("registrarPedido", new AbstractAction() {
             @Override
-            public void actionPerformed(ActionEvent evento) {
-                registrarPedido();
-            }
+            public void actionPerformed(ActionEvent evento) { registrarPedido(); }
         });
     }
 
     private void avisar(String mensagem) {
         JOptionPane.showMessageDialog(this, mensagem, "Atenção", JOptionPane.WARNING_MESSAGE);
+    }
+
+    private String nomeDia(int dia) {
+        String[] dias = {"Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"};
+        return dias[dia - 1];
+    }
+
+    public static boolean temPedidosDoCliente(int idCliente) {
+        return BancoAplicacao.temPedidosDoCliente(idCliente);
     }
 
     static class ItemPedido {
@@ -466,7 +464,19 @@ public class TelaPedidos extends JFrame {
             this.quantidade = quantidade;
         }
 
-        private BigDecimal subtotal() {
+        ItemPedido(String nome, BigDecimal preco, int quantidade) {
+            this.origem = null;
+            this.nome = nome;
+            this.preco = preco;
+            this.quantidade = quantidade;
+        }
+
+        TelaCardapios.ItemCardapio getOrigem() { return origem; }
+        String getNome() { return nome; }
+        BigDecimal getPreco() { return preco; }
+        int getQuantidade() { return quantidade; }
+
+        BigDecimal subtotal() {
             return preco.multiply(new BigDecimal(quantidade));
         }
     }
@@ -478,28 +488,51 @@ public class TelaPedidos extends JFrame {
         private final boolean antecipado;
         private final int idCliente;
         private final String nomeCliente;
+        private boolean pago;
         private boolean retirado;
+        private boolean emailEnviado;
+        private String emailErro;
+        private final int diaCardapio;
+        private final BigDecimal saldoApos;
 
-        private Pedido(int id, LocalDateTime data, List<ItemPedido> itens,
-                boolean antecipado, int idCliente, String nomeCliente, boolean retirado) {
+        Pedido(int id, LocalDateTime data, List<ItemPedido> itens,
+                boolean antecipado, int idCliente, String nomeCliente,
+                boolean pago, boolean retirado, boolean emailEnviado,
+                String emailErro, int diaCardapio, BigDecimal saldoApos) {
             this.idPedido = id;
             this.dataPedido = data;
             this.itens = itens;
             this.antecipado = antecipado;
             this.idCliente = idCliente;
             this.nomeCliente = nomeCliente;
+            this.pago = pago;
             this.retirado = retirado;
+            this.emailEnviado = emailEnviado;
+            this.emailErro = emailErro;
+            this.diaCardapio = diaCardapio;
+            this.saldoApos = saldoApos;
         }
 
-        private BigDecimal total() {
+        int getIdPedido() { return idPedido; }
+        int getIdCliente() { return idCliente; }
+        LocalDateTime getDataPedido() { return dataPedido; }
+        boolean isPago() { return pago; }
+        boolean isEmailEnviado() { return emailEnviado; }
+        String getEmailErro() { return emailErro; }
+        BigDecimal getSaldoApos() { return saldoApos; }
+
+        void definirResultadoEmail(boolean enviado, String erro) {
+            this.emailEnviado = enviado;
+            this.emailErro = erro;
+        }
+
+        BigDecimal total() {
             BigDecimal total = BigDecimal.ZERO;
-            for (ItemPedido item : itens) {
-                total = total.add(item.subtotal());
-            }
+            for (ItemPedido item : itens) total = total.add(item.subtotal());
             return total;
         }
 
-        private String resumoItens() {
+        String resumoItens() {
             StringBuilder resumo = new StringBuilder();
             for (int i = 0; i < itens.size(); i++) {
                 if (i > 0) resumo.append(", ");
@@ -508,19 +541,16 @@ public class TelaPedidos extends JFrame {
             return resumo.toString();
         }
 
-        /** Representação que será persistida em itempedido (JSON). */
-        @SuppressWarnings("unused")
-        private String gerarItensJson() {
-            StringBuilder json = new StringBuilder("{\"itens\":[");
-            for (int i = 0; i < itens.size(); i++) {
-                if (i > 0) json.append(',');
-                ItemPedido item = itens.get(i);
-                json.append("{\"nome\":\"")
-                        .append(CardapioJson.escapar(item.nome))
-                        .append("\",\"preco\":").append(item.preco.toPlainString())
-                        .append(",\"quantidade\":").append(item.quantidade).append('}');
+        String resumoItensEmLinhas() {
+            StringBuilder resumo = new StringBuilder();
+            for (ItemPedido item : itens) {
+                resumo.append("- ").append(item.quantidade).append("x ")
+                        .append(item.nome).append(" — R$ ")
+                        .append(item.preco.toPlainString().replace('.', ','))
+                        .append(" cada — subtotal R$ ")
+                        .append(item.subtotal().toPlainString().replace('.', ',')).append('\n');
             }
-            return json.append("]}").toString();
+            return resumo.toString().trim();
         }
     }
 

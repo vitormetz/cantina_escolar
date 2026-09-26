@@ -139,6 +139,16 @@ public class TelaPrincipal extends JFrame {
             } catch (Exception excecao) {
                 // O tema padrão do Java será usado se o tema do Windows falhar.
             }
+            try {
+                BancoAplicacao.testarConexao();
+            } catch (RuntimeException erro) {
+                javax.swing.JOptionPane.showMessageDialog(null,
+                        erro.getMessage()
+                        + "\nConfigure o MySQL e execute o schema/migração antes de abrir o sistema.",
+                        "Banco de dados indisponível",
+                        javax.swing.JOptionPane.ERROR_MESSAGE);
+                return;
+            }
             new TelaPrincipal().setVisible(true);
         });
     }
