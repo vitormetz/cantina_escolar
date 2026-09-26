@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS cliente (
     emailresponsavel VARCHAR(255) NOT NULL,
     alergias TEXT NULL,
     PRIMARY KEY (idcliente),
+    UNIQUE KEY uk_cliente_nome (nomecliente),
     CONSTRAINT ck_cliente_saldo CHECK (saldo >= 0),
     CONSTRAINT ck_cliente_limitesaldo CHECK (limitesaldo >= 0)
 );
@@ -34,10 +35,15 @@ CREATE TABLE IF NOT EXISTS pedido (
     antecipado BOOLEAN NOT NULL DEFAULT FALSE,
     idcliente INT NOT NULL,
     retirado BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Garante que cada cliente tenha somente um pedido ainda não retirado.
+    -- Pedidos concluídos geram NULL e deixam de participar da restrição UNIQUE.
+    cliente_pendente INT GENERATED ALWAYS AS (
+        CASE WHEN retirado = FALSE THEN idcliente ELSE NULL END
+    ) STORED,
     PRIMARY KEY (idpedido),
+    UNIQUE KEY uk_pedido_cliente_pendente (cliente_pendente),
     CONSTRAINT fk_pedido_cliente
         FOREIGN KEY (idcliente) REFERENCES cliente (idcliente)
         ON UPDATE CASCADE
         ON DELETE RESTRICT
 );
-

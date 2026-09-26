@@ -1,5 +1,6 @@
 import br.com.time7.cantina.model.Cliente;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JFrame;
@@ -10,6 +11,8 @@ import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.JComponent;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -22,6 +25,11 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.KeyboardFocusManager;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.NumberFormat;
@@ -54,10 +62,10 @@ public class TelaClientes extends JFrame {
     private DefaultTableModel modeloTabela;
 
     // Simula a coleção de clientes que futuramente virá do banco de dados.
-    private final List<Cliente> clientes = new ArrayList<Cliente>();
+    private static final List<Cliente> CLIENTES = new ArrayList<Cliente>();
 
     // Simula um ID gerado automaticamente pelo banco (AUTO_INCREMENT).
-    private int proximoId = 1;
+    private static int proximoId = 1;
 
     // Formata valores como R$ 10,00 somente para exibição na tabela.
     private final NumberFormat formatoMoeda =
@@ -67,12 +75,21 @@ public class TelaClientes extends JFrame {
     public TelaClientes() {
         configurarJanela();
         montarInterface();
+        configurarAtalhos();
+        atualizarTabela();
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowActivated(WindowEvent evento) {
+                atualizarTabela();
+            }
+        });
     }
 
     /** Define as configurações gerais da janela. */
     private void configurarJanela() {
         setTitle("Cantina Escolar - Clientes");
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        // Ao fechar esta tela, o painel principal continua aberto.
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setMinimumSize(new Dimension(980, 650));
         setSize(1120, 700);
         setLocationRelativeTo(null);
@@ -131,6 +148,13 @@ public class TelaClientes extends JFrame {
         campoAlergias = new JTextArea(2, 24);
         campoAlergias.setLineWrap(true);
         campoAlergias.setWrapStyleWord(true);
+        // Em JTextArea, Tab normalmente insere uma tabulação. Aqui ele passa
+        // para o próximo campo, como acontece no restante do formulário.
+        campoAlergias.setFocusTraversalKeys(
+                KeyboardFocusManager.FORWARD_TRAVERSAL_KEYS,
+                KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                        .getDefaultFocusTraversalKeys(
+                                KeyboardFocusManager.FORWARD_TRAVERSAL_KEYS));
 
         adicionarCampo(formulario, "Nome do cliente *", campoNomeCliente, 0, 0, 1);
         adicionarCampo(formulario, "Nome do responsável *", campoNomeResponsavel, 2, 0, 1);
@@ -230,6 +254,12 @@ public class TelaClientes extends JFrame {
         JButton botaoEditar = new JButton("Salvar edição");
         JButton botaoAdicionar = new JButton("Adicionar cliente");
 
+        botaoLimpar.setMnemonic(KeyEvent.VK_L);
+        botaoExcluir.setMnemonic(KeyEvent.VK_X);
+        botaoEditar.setMnemonic(KeyEvent.VK_E);
+        botaoAdicionar.setMnemonic(KeyEvent.VK_A);
+        botaoAdicionar.setToolTipText("Adicionar cliente (Alt+A ou Enter)");
+
         botaoAdicionar.addActionListener(evento -> adicionarCliente());
         botaoEditar.addActionListener(evento -> editarCliente());
         botaoExcluir.addActionListener(evento -> excluirCliente());
@@ -239,6 +269,7 @@ public class TelaClientes extends JFrame {
         botoes.add(botaoExcluir);
         botoes.add(botaoEditar);
         botoes.add(botaoAdicionar);
+        getRootPane().setDefaultButton(botaoAdicionar);
         return botoes;
     }
 
@@ -249,8 +280,15 @@ public class TelaClientes extends JFrame {
             return;
         }
 
-        clientes.add(novoCliente);
-        proximoId++;
+        if (nomeJaExiste(novoCliente.getNomeCliente(), 0)) {
+            mostrarAviso("Já existe um cliente com esse nome. O nome deve ser único.");
+            return;
+        }
+
+        synchronized (CLIENTES) {
+            CLIENTES.add(novoCliente);
+            proximoId++;
+        }
         atualizarTabela();
         limparFormulario();
 
@@ -271,13 +309,20 @@ public class TelaClientes extends JFrame {
         }
 
         // O ID não muda durante a edição.
-        int idAtual = clientes.get(linhaSelecionada).getIdCliente();
+        int idAtual = CLIENTES.get(linhaSelecionada).getIdCliente();
         Cliente clienteEditado = lerClienteDoFormulario(idAtual);
         if (clienteEditado == null) {
             return;
         }
 
-        clientes.set(linhaSelecionada, clienteEditado);
+        if (nomeJaExiste(clienteEditado.getNomeCliente(), idAtual)) {
+            mostrarAviso("Já existe outro cliente com esse nome.");
+            return;
+        }
+
+        synchronized (CLIENTES) {
+            CLIENTES.set(linhaSelecionada, clienteEditado);
+        }
         atualizarTabela();
         limparFormulario();
 
@@ -297,7 +342,7 @@ public class TelaClientes extends JFrame {
             return;
         }
 
-        Cliente cliente = clientes.get(linhaSelecionada);
+        Cliente cliente = CLIENTES.get(linhaSelecionada);
         int resposta = JOptionPane.showConfirmDialog(
                 this,
                 "Deseja realmente excluir o cliente " + cliente.getNomeCliente() + "?",
@@ -306,7 +351,9 @@ public class TelaClientes extends JFrame {
                 JOptionPane.WARNING_MESSAGE);
 
         if (resposta == JOptionPane.YES_OPTION) {
-            clientes.remove(linhaSelecionada);
+            synchronized (CLIENTES) {
+                CLIENTES.remove(linhaSelecionada);
+            }
             atualizarTabela();
             limparFormulario();
         }
@@ -385,16 +432,18 @@ public class TelaClientes extends JFrame {
     private void atualizarTabela() {
         modeloTabela.setRowCount(0);
 
-        for (Cliente cliente : clientes) {
-            modeloTabela.addRow(new Object[] {
-                    cliente.getIdCliente(),
-                    cliente.getNomeCliente(),
-                    cliente.getNomeResponsavel(),
-                    formatoMoeda.format(cliente.getSaldo()),
-                    formatoMoeda.format(cliente.getLimiteSaldo()),
-                    cliente.getEmailResponsavel(),
-                    cliente.getAlergias()
-            });
+        synchronized (CLIENTES) {
+            for (Cliente cliente : CLIENTES) {
+                modeloTabela.addRow(new Object[] {
+                        cliente.getIdCliente(),
+                        cliente.getNomeCliente(),
+                        cliente.getNomeResponsavel(),
+                        formatoMoeda.format(cliente.getSaldo()),
+                        formatoMoeda.format(cliente.getLimiteSaldo()),
+                        cliente.getEmailResponsavel(),
+                        cliente.getAlergias()
+                });
+            }
         }
     }
 
@@ -403,7 +452,7 @@ public class TelaClientes extends JFrame {
         int linhaSelecionada = tabelaClientes.getSelectedRow();
 
         if (linhaSelecionada != -1) {
-            Cliente cliente = clientes.get(linhaSelecionada);
+            Cliente cliente = CLIENTES.get(linhaSelecionada);
             campoNomeCliente.setText(cliente.getNomeCliente());
             campoNomeResponsavel.setText(cliente.getNomeResponsavel());
             campoSaldo.setText(valorParaCampo(cliente.getSaldo()));
@@ -439,6 +488,61 @@ public class TelaClientes extends JFrame {
                 mensagem,
                 "Atenção",
                 JOptionPane.WARNING_MESSAGE);
+    }
+
+    private void configurarAtalhos() {
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "fechar");
+        getRootPane().getActionMap().put("fechar", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent evento) {
+                dispose();
+            }
+        });
+    }
+
+    /** Retorna uma cópia para preencher o seletor da tela de pedidos. */
+    public static List<Cliente> listarClientes() {
+        synchronized (CLIENTES) {
+            return new ArrayList<Cliente>(CLIENTES);
+        }
+    }
+
+    /**
+     * Desconta o pedido usando o nome como identificação visível.
+     * Retorna false se o cliente não existir ou não possuir saldo suficiente.
+     */
+    public static boolean debitarSaldoPorNome(String nomeCliente, BigDecimal valor) {
+        synchronized (CLIENTES) {
+            for (int i = 0; i < CLIENTES.size(); i++) {
+                Cliente atual = CLIENTES.get(i);
+                if (atual.getNomeCliente().equalsIgnoreCase(nomeCliente)
+                        && atual.getSaldo().compareTo(valor) >= 0) {
+                    CLIENTES.set(i, new Cliente(
+                            atual.getIdCliente(),
+                            atual.getNomeCliente(),
+                            atual.getNomeResponsavel(),
+                            atual.getSaldo().subtract(valor),
+                            atual.getLimiteSaldo(),
+                            atual.getEmailResponsavel(),
+                            atual.getAlergias()));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean nomeJaExiste(String nome, int idIgnorado) {
+        synchronized (CLIENTES) {
+            for (Cliente cliente : CLIENTES) {
+                if (cliente.getIdCliente() != idIgnorado
+                        && cliente.getNomeCliente().equalsIgnoreCase(nome)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Ponto de entrada: é aqui que o Java inicia o programa. */

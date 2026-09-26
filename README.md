@@ -15,6 +15,7 @@ Desenvolver um sistema para facilitar e automatizar processos de uma cantina esc
 
 ## Funcionalidades
 
+- Painel principal para acessar os módulos
 - Gerenciamento de cardápios
 - Controle de produtos disponíveis e esgotados
 - Registro de pedidos antecipados
@@ -22,6 +23,34 @@ Desenvolver um sistema para facilitar e automatizar processos de uma cantina esc
 - Cadastro de clientes
 - Edição de clientes
 - Atualização das informações dos clientes
+
+## Telas disponíveis
+
+- `TelaPrincipal.java`: painel de entrada para clientes, cardápios e pedidos;
+- `TelaClientes.java`: cadastro, edição e exclusão de clientes;
+- `TelaCardapios.java`: criação e edição de cardápios, leitura do JSON e
+  disponibilidade individual de cada item;
+- `TelaPedidos.java`: cadastro e hub dos pedidos ainda não retirados.
+
+A aplicação impede que um cliente tenha dois pedidos ativos ao mesmo tempo.
+Essa regra também está representada no `database/schema.sql` por uma chave
+única gerada para os pedidos com `retirado = false`.
+
+Antes de registrar um pedido, a aplicação verifica o saldo do cliente. O nome
+do cliente é único e é usado como identificação visível; o `idcliente` continua
+existindo internamente para os relacionamentos do banco. Quando o pedido é
+confirmado, seu total é descontado do saldo.
+
+### Navegação pelo teclado
+
+- `Tab` e `Shift+Tab`: avançar e voltar entre campos;
+- `Enter`: ativar o botão principal da tela;
+- `Esc`: fechar uma tela secundária;
+- `Ctrl+1`, `Ctrl+2` e `Ctrl+3`: abrir Clientes, Cardápios e Pedidos;
+- `Ctrl+S`: salvar um cardápio;
+- `Ctrl+N`: iniciar um cardápio novo;
+- `Ctrl+Enter`: registrar um pedido;
+- `Alt` + letra sublinhada: acionar os demais botões.
 
 ## Primeira entrega: tela de clientes
 
@@ -95,13 +124,14 @@ teste de conexão.
 
 1. Instale um JDK 8 ou mais recente e a extensão **Extension Pack for Java**.
 2. Abra a pasta deste projeto no VS Code.
-3. Abra o arquivo `src/TelaClientes.java`.
+3. Abra o arquivo `src/TelaPrincipal.java`.
 4. Clique em **Run**, exibido acima do método `main`.
 
 Também é possível compilar pelo terminal:
 
 ```powershell
+New-Item -ItemType Directory -Force out
 $fontes = Get-ChildItem src -Recurse -Filter *.java
 javac -d out $fontes.FullName
-java -cp out TelaClientes
+java -cp out TelaPrincipal
 ```

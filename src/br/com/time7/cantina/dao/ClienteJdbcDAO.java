@@ -85,6 +85,22 @@ public class ClienteJdbcDAO implements ClienteDAO {
     }
 
     @Override
+    public Cliente buscarPorNome(String nomeCliente) throws SQLException {
+        String sql = "SELECT idcliente, nomecliente, nomeresponsavel, saldo, "
+                + "limitesaldo, emailresponsavel, alergias "
+                + "FROM cliente WHERE nomecliente = ?";
+
+        try (Connection conexao = dataSource.getConnection();
+                PreparedStatement comando = conexao.prepareStatement(sql)) {
+            comando.setString(1, nomeCliente);
+
+            try (ResultSet resultado = comando.executeQuery()) {
+                return resultado.next() ? mapearCliente(resultado) : null;
+            }
+        }
+    }
+
+    @Override
     public boolean atualizar(Cliente cliente) throws SQLException {
         String sql = "UPDATE cliente SET nomecliente = ?, nomeresponsavel = ?, "
                 + "saldo = ?, limitesaldo = ?, emailresponsavel = ?, alergias = ? "

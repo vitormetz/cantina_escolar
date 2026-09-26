@@ -61,4 +61,10 @@ public class Cliente {
     public String getAlergias() {
         return alergias;
     }
+
+    /** O combo da tela de pedidos identifica o cliente somente pelo nome. */
+    @Override
+    public String toString() {
+        return nomeCliente;
+    }
 }

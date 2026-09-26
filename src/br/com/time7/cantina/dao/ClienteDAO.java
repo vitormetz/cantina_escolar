@@ -13,6 +13,8 @@ public interface ClienteDAO {
 
     Cliente buscarPorId(int idCliente) throws SQLException;
 
+    Cliente buscarPorNome(String nomeCliente) throws SQLException;
+
     boolean atualizar(Cliente cliente) throws SQLException;
 
     boolean excluir(int idCliente) throws SQLException;

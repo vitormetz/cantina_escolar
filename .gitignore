@@ -5,6 +5,7 @@
 bin/
 out/
 build/
+target/
 
 # Configurações locais dos editores
 .vscode/
