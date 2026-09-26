@@ -4,7 +4,7 @@ Projeto desenvolvido pelo Time 7 durante o Hackathon.
 
 ## Equipe
 
-- Vitor
+- Vitor Metz
 - Augusto Martins
 - Pedro Holler
 
