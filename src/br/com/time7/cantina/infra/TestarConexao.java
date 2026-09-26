@@ -14,6 +14,8 @@ public class TestarConexao {
         } catch (Exception excecao) {
             System.err.println("Não foi possível conectar ao banco.");
             System.err.println(excecao.getMessage());
+            // Permite que o terminal e scripts também reconheçam a falha.
+            System.exit(1);
         }
     }
 }

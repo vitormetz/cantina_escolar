@@ -1,5 +1,7 @@
 package br.com.time7.cantina.model;
 
+import br.com.time7.cantina.util.ValoresMonetarios;
+
 import java.math.BigDecimal;
 
 /**
@@ -28,8 +30,9 @@ public class Cliente {
         this.idCliente = idCliente;
         this.nomeCliente = nomeCliente;
         this.nomeResponsavel = nomeResponsavel;
-        this.saldo = saldo;
-        this.limiteSaldo = limiteSaldo;
+        // A regra do DECIMAL também vale para objetos criados fora do formulário.
+        this.saldo = ValoresMonetarios.validar(saldo, "Saldo");
+        this.limiteSaldo = ValoresMonetarios.validar(limiteSaldo, "Limite de saldo");
         this.emailResponsavel = emailResponsavel;
         this.alergias = alergias;
     }

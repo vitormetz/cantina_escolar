@@ -120,6 +120,17 @@ O driver MySQL Connector/J está declarado no `pom.xml`. É necessário ter o
 Maven instalado ou configurar a dependência pelo VS Code antes de executar o
 teste de conexão.
 
+O `schema.sql` prepara uma instalação nova. Como usa `CREATE TABLE IF NOT EXISTS`,
+executá-lo novamente não modifica tabelas antigas; mudanças futuras na estrutura
+deverão ser aplicadas por arquivos de migração próprios.
+
+## Verificações automáticas
+
+Os testes simples da pasta `tests` não dependem de bibliotecas externas. Eles
+conferem valores compatíveis com `DECIMAL(10,2)`, leitura das configurações e a
+importação completa do JSON do cardápio. A importação rejeita o documento inteiro
+quando qualquer item é inválido, sem apagar os itens que já estavam na tela.
+
 ## Como executar no VS Code
 
 1. Instale um JDK 8 ou mais recente e a extensão **Extension Pack for Java**.

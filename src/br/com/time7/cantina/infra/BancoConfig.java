@@ -26,12 +26,18 @@ public final class BancoConfig {
         return new BancoConfig(
                 lerVariavel("CANTINA_DB_URL", URL_PADRAO),
                 lerVariavel("CANTINA_DB_USER", "root"),
-                lerVariavel("CANTINA_DB_PASSWORD", ""));
+                lerSenha());
     }
 
     private static String lerVariavel(String nome, String valorPadrao) {
         String valor = System.getenv(nome);
         return valor == null || valor.trim().isEmpty() ? valorPadrao : valor.trim();
+    }
+
+    private static String lerSenha() {
+        // Espaços podem fazer parte da senha; não devemos alterá-la com trim().
+        String valor = System.getenv("CANTINA_DB_PASSWORD");
+        return valor == null ? "" : valor;
     }
 
     public String getUrl() {

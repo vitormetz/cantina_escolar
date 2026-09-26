@@ -1,4 +1,5 @@
 import br.com.time7.cantina.model.Cliente;
+import br.com.time7.cantina.util.ValoresMonetarios;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -60,6 +61,9 @@ public class TelaClientes extends JFrame {
 
     private JTable tabelaClientes;
     private DefaultTableModel modeloTabela;
+    // A seleção aponta para o registro exibido, nunca para uma posição de outra janela.
+    private final List<Cliente> clientesVisiveis = new ArrayList<Cliente>();
+    private boolean atualizandoTabela;
 
     // Simula a coleção de clientes que futuramente virá do banco de dados.
     private static final List<Cliente> CLIENTES = new ArrayList<Cliente>();
@@ -155,6 +159,10 @@ public class TelaClientes extends JFrame {
                 KeyboardFocusManager.getCurrentKeyboardFocusManager()
                         .getDefaultFocusTraversalKeys(
                                 KeyboardFocusManager.FORWARD_TRAVERSAL_KEYS));
+        campoAlergias.setFocusTraversalKeys(
+                KeyboardFocusManager.BACKWARD_TRAVERSAL_KEYS,
+                KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                        .getDefaultFocusTraversalKeys(KeyboardFocusManager.BACKWARD_TRAVERSAL_KEYS));
 
         adicionarCampo(formulario, "Nome do cliente *", campoNomeCliente, 0, 0, 1);
         adicionarCampo(formulario, "Nome do responsável *", campoNomeResponsavel, 2, 0, 1);
@@ -234,7 +242,7 @@ public class TelaClientes extends JFrame {
 
         // Ao selecionar uma linha, seus dados voltam para o formulário.
         tabelaClientes.getSelectionModel().addListSelectionListener(evento -> {
-            if (!evento.getValueIsAdjusting()) {
+            if (!evento.getValueIsAdjusting() && !atualizandoTabela) {
                 preencherFormularioComClienteSelecionado();
             }
         });
@@ -309,7 +317,8 @@ public class TelaClientes extends JFrame {
         }
 
         // O ID não muda durante a edição.
-        int idAtual = CLIENTES.get(linhaSelecionada).getIdCliente();
+        Cliente original = clientesVisiveis.get(tabelaClientes.convertRowIndexToModel(linhaSelecionada));
+        int idAtual = original.getIdCliente();
         Cliente clienteEditado = lerClienteDoFormulario(idAtual);
         if (clienteEditado == null) {
             return;
@@ -321,7 +330,14 @@ public class TelaClientes extends JFrame {
         }
 
         synchronized (CLIENTES) {
-            CLIENTES.set(linhaSelecionada, clienteEditado);
+            // Um pedido pode ter descontado o saldo depois que o formulário foi preenchido.
+            // Não sobrescrevemos esse débito com os dados antigos da tela.
+            if (buscarClientePorId(idAtual) != original) {
+                atualizarTabela();
+                mostrarAviso("Os dados deste cliente mudaram. Confira os valores e edite novamente.");
+                return;
+            }
+            CLIENTES.set(CLIENTES.indexOf(original), clienteEditado);
         }
         atualizarTabela();
         limparFormulario();
@@ -342,7 +358,11 @@ public class TelaClientes extends JFrame {
             return;
         }
 
-        Cliente cliente = CLIENTES.get(linhaSelecionada);
+        Cliente cliente = clientesVisiveis.get(tabelaClientes.convertRowIndexToModel(linhaSelecionada));
+        if (TelaPedidos.temPedidosDoCliente(cliente.getIdCliente())) {
+            mostrarAviso("Este cliente possui pedidos registrados e não pode ser excluído.");
+            return;
+        }
         int resposta = JOptionPane.showConfirmDialog(
                 this,
                 "Deseja realmente excluir o cliente " + cliente.getNomeCliente() + "?",
@@ -351,8 +371,13 @@ public class TelaClientes extends JFrame {
                 JOptionPane.WARNING_MESSAGE);
 
         if (resposta == JOptionPane.YES_OPTION) {
+            if (TelaPedidos.temPedidosDoCliente(cliente.getIdCliente())) {
+                mostrarAviso("Este cliente possui pedidos registrados e não pode ser excluído.");
+                return;
+            }
             synchronized (CLIENTES) {
-                CLIENTES.remove(linhaSelecionada);
+                Cliente atual = buscarClientePorId(cliente.getIdCliente());
+                if (atual != null) CLIENTES.remove(atual);
             }
             atualizarTabela();
             limparFormulario();
@@ -376,7 +401,13 @@ public class TelaClientes extends JFrame {
             return null;
         }
 
-        if (!emailResponsavel.contains("@") || !emailResponsavel.contains(".")) {
+        if (nomeCliente.length() > 150 || nomeResponsavel.length() > 150
+                || emailResponsavel.length() > 255) {
+            mostrarAviso("Use até 150 caracteres nos nomes e até 255 no e-mail.");
+            return null;
+        }
+
+        if (!emailResponsavel.matches("[^\\s@]+@[^\\s@.]+(?:\\.[^\\s@.]+)+")) {
             mostrarAviso("Informe um e-mail válido para o responsável.");
             return null;
         }
@@ -405,35 +436,23 @@ public class TelaClientes extends JFrame {
      * double para valores monetários e poderá ser usado em uma coluna DECIMAL.
      */
     private BigDecimal converterValorMonetario(String texto, String nomeCampo) {
-        String valor = texto.trim().replace("R$", "").replace(" ", "");
-
-        if (valor.isEmpty()) {
-            valor = "0";
-        }
-
-        // Quando existe vírgula, pontos anteriores são separadores de milhar.
-        if (valor.contains(",")) {
-            valor = valor.replace(".", "").replace(",", ".");
-        }
-
-        try {
-            BigDecimal numero = new BigDecimal(valor).setScale(2, RoundingMode.HALF_UP);
-            if (numero.compareTo(BigDecimal.ZERO) < 0) {
-                throw new IllegalArgumentException(nomeCampo + " não pode ser negativo.");
-            }
-            return numero;
-        } catch (NumberFormatException excecao) {
-            throw new IllegalArgumentException(
-                    nomeCampo + " deve ser um número, por exemplo: 25,50.");
-        }
+        return ValoresMonetarios.converter(texto, nomeCampo);
     }
 
     /** Recria as linhas da tabela a partir da lista de objetos Cliente. */
     private void atualizarTabela() {
-        modeloTabela.setRowCount(0);
-
-        synchronized (CLIENTES) {
-            for (Cliente cliente : CLIENTES) {
+        List<Cliente> atuais = listarClientes();
+        // Voltar de uma mensagem não deve apagar a seleção nem a edição em andamento.
+        if (atuais.equals(clientesVisiveis)) return;
+        int linha = tabelaClientes.getSelectedRow();
+        Cliente selecionado = linha < 0 ? null
+                : clientesVisiveis.get(tabelaClientes.convertRowIndexToModel(linha));
+        atualizandoTabela = true;
+        try {
+            modeloTabela.setRowCount(0);
+            clientesVisiveis.clear();
+            clientesVisiveis.addAll(atuais);
+            for (Cliente cliente : clientesVisiveis) {
                 modeloTabela.addRow(new Object[] {
                         cliente.getIdCliente(),
                         cliente.getNomeCliente(),
@@ -444,6 +463,20 @@ public class TelaClientes extends JFrame {
                         cliente.getAlergias()
                 });
             }
+            if (selecionado != null) {
+                for (int i = 0; i < clientesVisiveis.size(); i++) {
+                    if (clientesVisiveis.get(i).getIdCliente() == selecionado.getIdCliente()) {
+                        tabelaClientes.setRowSelectionInterval(i, i);
+                        break;
+                    }
+                }
+            }
+        } finally {
+            atualizandoTabela = false;
+        }
+        if (selecionado != null && buscarClientePorId(selecionado.getIdCliente()) != selecionado) {
+            if (tabelaClientes.getSelectedRow() < 0) limparFormulario();
+            else preencherFormularioComClienteSelecionado();
         }
     }
 
@@ -452,7 +485,7 @@ public class TelaClientes extends JFrame {
         int linhaSelecionada = tabelaClientes.getSelectedRow();
 
         if (linhaSelecionada != -1) {
-            Cliente cliente = CLIENTES.get(linhaSelecionada);
+            Cliente cliente = clientesVisiveis.get(tabelaClientes.convertRowIndexToModel(linhaSelecionada));
             campoNomeCliente.setText(cliente.getNomeCliente());
             campoNomeResponsavel.setText(cliente.getNomeResponsavel());
             campoSaldo.setText(valorParaCampo(cliente.getSaldo()));
@@ -509,14 +542,16 @@ public class TelaClientes extends JFrame {
     }
 
     /**
-     * Desconta o pedido usando o nome como identificação visível.
+     * Desconta pelo ID estável; o nome continua sendo a identificação visível.
      * Retorna false se o cliente não existir ou não possuir saldo suficiente.
      */
-    public static boolean debitarSaldoPorNome(String nomeCliente, BigDecimal valor) {
+    public static boolean debitarSaldo(int idCliente, BigDecimal valor) {
+        valor = ValoresMonetarios.validar(valor, "Total do pedido");
+        if (valor.signum() <= 0) return false;
         synchronized (CLIENTES) {
             for (int i = 0; i < CLIENTES.size(); i++) {
                 Cliente atual = CLIENTES.get(i);
-                if (atual.getNomeCliente().equalsIgnoreCase(nomeCliente)
+                if (atual.getIdCliente() == idCliente
                         && atual.getSaldo().compareTo(valor) >= 0) {
                     CLIENTES.set(i, new Cliente(
                             atual.getIdCliente(),
@@ -531,6 +566,15 @@ public class TelaClientes extends JFrame {
             }
         }
         return false;
+    }
+
+    public static Cliente buscarClientePorId(int idCliente) {
+        synchronized (CLIENTES) {
+            for (Cliente cliente : CLIENTES) {
+                if (cliente.getIdCliente() == idCliente) return cliente;
+            }
+        }
+        return null;
     }
 
     private boolean nomeJaExiste(String nome, int idIgnorado) {

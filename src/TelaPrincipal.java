@@ -17,9 +17,14 @@ import java.awt.Font;
 import java.awt.GridLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.util.function.Supplier;
 
 /** Tela inicial usada para acessar os três módulos da cantina. */
 public class TelaPrincipal extends JFrame {
+    private JFrame telaClientes;
+    private JFrame telaCardapios;
+    private JFrame telaPedidos;
+
     public TelaPrincipal() {
         setTitle("Cantina Escolar - Painel principal");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -68,9 +73,9 @@ public class TelaPrincipal extends JFrame {
         cardapios.setToolTipText("Abrir cardápios (Alt+A ou Ctrl+2)");
         pedidos.setToolTipText("Abrir pedidos (Alt+P ou Ctrl+3)");
 
-        clientes.addActionListener(evento -> new TelaClientes().setVisible(true));
-        cardapios.addActionListener(evento -> new TelaCardapios().setVisible(true));
-        pedidos.addActionListener(evento -> new TelaPedidos().setVisible(true));
+        clientes.addActionListener(evento -> telaClientes = abrirTela(telaClientes, TelaClientes::new));
+        cardapios.addActionListener(evento -> telaCardapios = abrirTela(telaCardapios, TelaCardapios::new));
+        pedidos.addActionListener(evento -> telaPedidos = abrirTela(telaPedidos, TelaPedidos::new));
 
         modulos.add(clientes);
         modulos.add(cardapios);
@@ -87,6 +92,16 @@ public class TelaPrincipal extends JFrame {
         configurarAtalho(KeyEvent.VK_2, "cardapios", cardapios);
         configurarAtalho(KeyEvent.VK_3, "pedidos", pedidos);
         getRootPane().setDefaultButton(clientes);
+    }
+
+    /** Reutiliza a janela aberta para evitar edições concorrentes do mesmo cadastro. */
+    private JFrame abrirTela(JFrame atual, Supplier<JFrame> criar) {
+        if (atual == null || !atual.isDisplayable()) atual = criar.get();
+        atual.setVisible(true);
+        atual.setExtendedState(atual.getExtendedState() & ~JFrame.ICONIFIED);
+        atual.toFront();
+        atual.requestFocus();
+        return atual;
     }
 
     private void configurarAtalho(int tecla, String nome, JButton botao) {
@@ -109,7 +124,7 @@ public class TelaPrincipal extends JFrame {
         botao.setFont(new Font("SansSerif", Font.PLAIN, 14));
         botao.setBackground(Color.WHITE);
         botao.setForeground(new Color(32, 45, 64));
-        botao.setFocusPainted(false);
+        botao.setFocusPainted(true);
         botao.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         botao.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(210, 217, 226)),

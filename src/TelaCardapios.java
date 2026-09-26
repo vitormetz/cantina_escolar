@@ -1,3 +1,4 @@
+import br.com.time7.cantina.util.ValoresMonetarios;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -29,13 +30,10 @@ import java.awt.KeyboardFocusManager;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Gerencia os cardápios e os itens armazenados em cardapio_json.
@@ -207,6 +205,11 @@ public class TelaCardapios extends JFrame {
                 KeyboardFocusManager.getCurrentKeyboardFocusManager()
                         .getDefaultFocusTraversalKeys(
                                 KeyboardFocusManager.FORWARD_TRAVERSAL_KEYS));
+        campoJson.setFocusTraversalKeys(
+                KeyboardFocusManager.BACKWARD_TRAVERSAL_KEYS,
+                KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                        .getDefaultFocusTraversalKeys(
+                                KeyboardFocusManager.BACKWARD_TRAVERSAL_KEYS));
         painel.add(new JScrollPane(campoJson), BorderLayout.CENTER);
 
         JButton carregar = new JButton("Carregar itens deste JSON");
@@ -238,6 +241,7 @@ public class TelaCardapios extends JFrame {
     }
 
     private void adicionarItem() {
+        if (!verificarJsonCarregado()) return;
         ItemCardapio item = lerItemDoFormulario();
         if (item != null) {
             itensEmEdicao.add(item);
@@ -247,6 +251,7 @@ public class TelaCardapios extends JFrame {
     }
 
     private void editarItem() {
+        if (!verificarJsonCarregado()) return;
         int linha = tabelaItens.getSelectedRow();
         if (linha < 0) {
             avisar("Selecione um item para editar.");
@@ -261,6 +266,7 @@ public class TelaCardapios extends JFrame {
     }
 
     private void alternarDisponibilidadeItem() {
+        if (!verificarJsonCarregado()) return;
         int linha = tabelaItens.getSelectedRow();
         if (linha < 0) {
             avisar("Selecione um item para alterar sua disponibilidade.");
@@ -273,6 +279,7 @@ public class TelaCardapios extends JFrame {
     }
 
     private void removerItem() {
+        if (!verificarJsonCarregado()) return;
         int linha = tabelaItens.getSelectedRow();
         if (linha < 0) {
             avisar("Selecione um item para remover.");
@@ -290,18 +297,20 @@ public class TelaCardapios extends JFrame {
             return null;
         }
         try {
-            BigDecimal preco = converterMoeda(campoPrecoItem.getText());
+            BigDecimal preco = ValoresMonetarios.converter(campoPrecoItem.getText(), "Preço");
             if (preco.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalArgumentException();
+                throw new IllegalArgumentException("Informe um preço maior que zero, por exemplo: 8,50.");
             }
             return new ItemCardapio(nome, preco, campoItemDisponivel.isSelected());
-        } catch (Exception excecao) {
-            avisar("Informe um preço maior que zero, por exemplo: 8,50.");
+        } catch (IllegalArgumentException excecao) {
+            avisar(excecao.getMessage());
             return null;
         }
     }
 
     private void salvarCardapio() {
+        // O texto pode ter sido editado diretamente; salvar não deve ignorar essas alterações.
+        if (!verificarJsonCarregado()) return;
         if (itensEmEdicao.isEmpty()) {
             avisar("Adicione pelo menos um item ao cardápio.");
             return;
@@ -365,6 +374,7 @@ public class TelaCardapios extends JFrame {
         campoCardapioDisponivel.setSelected(selecionado.isDisponivel());
         itensEmEdicao.clear();
         itensEmEdicao.addAll(copiarItens(selecionado.getItens()));
+        limparFormularioItem();
         atualizarTabelaEJson();
     }
 
@@ -392,12 +402,12 @@ public class TelaCardapios extends JFrame {
                     item.isDisponivel() ? "Disponível" : "Esgotado"
             });
         }
-        campoJson.setText(gerarJson(itensEmEdicao));
+        campoJson.setText(CardapioJson.gerar(itensEmEdicao));
     }
 
     private void preencherItemSelecionado() {
         int linha = tabelaItens.getSelectedRow();
-        if (linha >= 0) {
+        if (linha >= 0 && linha < itensEmEdicao.size()) {
             ItemCardapio item = itensEmEdicao.get(linha);
             campoNomeItem.setText(item.getNome());
             campoPrecoItem.setText(item.getPreco().toPlainString().replace('.', ','));
@@ -412,58 +422,29 @@ public class TelaCardapios extends JFrame {
         tabelaItens.clearSelection();
     }
 
-    /** Lê o formato JSON gerado por esta tela. */
+    /** A lista atual só muda depois de validar o documento completo. */
     private void carregarItensDoJson() {
-        String json = campoJson.getText().trim();
-        Pattern padrao = Pattern.compile(
-                "\\{\\s*\\\"nome\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\""
-                + "\\s*,\\s*\\\"preco\\\"\\s*:\\s*([0-9]+(?:\\.[0-9]{1,2})?)"
-                + "\\s*,\\s*\\\"disponivel\\\"\\s*:\\s*(true|false)\\s*\\}");
-        Matcher correspondencia = padrao.matcher(json);
-        List<ItemCardapio> carregados = new ArrayList<ItemCardapio>();
-        while (correspondencia.find()) {
-            carregados.add(new ItemCardapio(
-                    desescaparJson(correspondencia.group(1)),
-                    new BigDecimal(correspondencia.group(2)).setScale(2, RoundingMode.HALF_UP),
-                    Boolean.parseBoolean(correspondencia.group(3))));
-        }
-        if (carregados.isEmpty()) {
-            avisar("JSON inválido ou sem itens. Use o formato gerado pela própria tela.");
-            return;
-        }
-        itensEmEdicao.clear();
-        itensEmEdicao.addAll(carregados);
-        atualizarTabelaEJson();
-    }
-
-    private String gerarJson(List<ItemCardapio> itens) {
-        StringBuilder json = new StringBuilder("{\"itens\":[");
-        for (int i = 0; i < itens.size(); i++) {
-            if (i > 0) {
-                json.append(',');
+        try {
+            List<ItemCardapio> carregados = CardapioJson.ler(campoJson.getText());
+            if (carregados.isEmpty()) {
+                avisar("O JSON precisa conter pelo menos um item.");
+                return;
             }
-            ItemCardapio item = itens.get(i);
-            json.append("{\"nome\":\"").append(escaparJson(item.getNome()))
-                    .append("\",\"preco\":").append(item.getPreco().toPlainString())
-                    .append(",\"disponivel\":").append(item.isDisponivel()).append('}');
+            itensEmEdicao.clear();
+            itensEmEdicao.addAll(carregados);
+            limparFormularioItem();
+            atualizarTabelaEJson();
+        } catch (IllegalArgumentException excecao) {
+            avisar("JSON inválido: " + excecao.getMessage());
         }
-        return json.append("]}").toString();
     }
 
-    private String escaparJson(String texto) {
-        return texto.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    private String desescaparJson(String texto) {
-        return texto.replace("\\\"", "\"").replace("\\\\", "\\");
-    }
-
-    private BigDecimal converterMoeda(String texto) {
-        String valor = texto.trim().replace("R$", "").replace(" ", "");
-        if (valor.contains(",")) {
-            valor = valor.replace(".", "").replace(",", ".");
+    private boolean verificarJsonCarregado() {
+        if (!campoJson.getText().trim().equals(CardapioJson.gerar(itensEmEdicao))) {
+            avisar("O JSON foi alterado. Clique em 'Carregar itens deste JSON' antes de salvar ou editar os itens.");
+            return false;
         }
-        return new BigDecimal(valor).setScale(2, RoundingMode.HALF_UP);
+        return true;
     }
 
     private List<ItemCardapio> copiarItens(List<ItemCardapio> origem) {

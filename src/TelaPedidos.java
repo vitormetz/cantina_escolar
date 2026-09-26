@@ -29,6 +29,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.math.BigDecimal;
 import java.text.NumberFormat;
+import java.text.ParseException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -54,6 +55,7 @@ public class TelaPedidos extends JFrame {
 
     private JComboBox<Cliente> seletorCliente;
     private JLabel rotuloSaldoCliente;
+    private JLabel rotuloTotal;
     private JCheckBox campoAntecipado;
     private JComboBox<TelaCardapios.ItemCardapio> seletorItem;
     private JSpinner campoQuantidade;
@@ -152,6 +154,8 @@ public class TelaPedidos extends JFrame {
         itens.add(new JScrollPane(tabelaNovoPedido), BorderLayout.CENTER);
 
         JPanel botoes = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 3));
+        rotuloTotal = new JLabel("Total: " + formatoMoeda.format(BigDecimal.ZERO));
+        botoes.add(rotuloTotal);
         JButton removerItem = new JButton("Remover item");
         JButton limpar = new JButton("Limpar pedido");
         JButton registrar = new JButton("Registrar pedido");
@@ -187,6 +191,7 @@ public class TelaPedidos extends JFrame {
         painel.add(new JScrollPane(tabelaPendentes), BorderLayout.CENTER);
 
         JButton concluir = new JButton("Marcar como retirado / concluído");
+        concluir.setMnemonic(KeyEvent.VK_C);
         concluir.addActionListener(evento -> concluirPedido());
         JPanel botoes = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         botoes.add(concluir);
@@ -200,20 +205,29 @@ public class TelaPedidos extends JFrame {
         for (TelaCardapios.ItemCardapio item : TelaCardapios.listarItensDisponiveis()) {
             seletorItem.addItem(item);
         }
-        seletorItem.setSelectedItem(selecionado);
+        // Na primeira carga, mantém o primeiro item; uma seleção removida vira vazia.
+        if (selecionado != null) {
+            seletorItem.setSelectedItem(null);
+            for (int i = 0; i < seletorItem.getItemCount(); i++) {
+                if (seletorItem.getItemAt(i) == selecionado) {
+                    seletorItem.setSelectedIndex(i);
+                    break;
+                }
+            }
+        }
     }
 
     private void atualizarClientes() {
         Cliente selecionado = (Cliente) seletorCliente.getSelectedItem();
-        String nomeSelecionado = selecionado == null ? null : selecionado.getNomeCliente();
+        Cliente paraSelecionar = null;
         seletorCliente.removeAllItems();
         for (Cliente cliente : TelaClientes.listarClientes()) {
             seletorCliente.addItem(cliente);
-            if (nomeSelecionado != null
-                    && cliente.getNomeCliente().equalsIgnoreCase(nomeSelecionado)) {
-                seletorCliente.setSelectedItem(cliente);
+            if (selecionado != null && cliente.getIdCliente() == selecionado.getIdCliente()) {
+                paraSelecionar = cliente;
             }
         }
+        if (selecionado != null) seletorCliente.setSelectedItem(paraSelecionar);
         atualizarSaldoClienteSelecionado();
     }
 
@@ -231,8 +245,20 @@ public class TelaPedidos extends JFrame {
             avisar("Não há itens disponíveis. Cadastre e salve um cardápio primeiro.");
             return;
         }
-        int quantidade = ((Number) campoQuantidade.getValue()).intValue();
-        itensDoNovoPedido.add(new ItemPedido(item.getNome(), item.getPreco(), quantidade));
+        if (!TelaCardapios.listarItensDisponiveis().contains(item)) {
+            atualizarItensDisponiveis();
+            avisar("Este item mudou ou ficou indisponível. Selecione novamente.");
+            return;
+        }
+        try {
+            // Confirma também a quantidade digitada, sem depender de sair do campo.
+            campoQuantidade.commitEdit();
+            int quantidade = ((Number) campoQuantidade.getValue()).intValue();
+            itensDoNovoPedido.add(new ItemPedido(item, quantidade));
+        } catch (ParseException | IllegalArgumentException excecao) {
+            avisar("Informe uma quantidade inteira entre 1 e 99.");
+            return;
+        }
         atualizarTabelaNovoPedido();
     }
 
@@ -252,42 +278,79 @@ public class TelaPedidos extends JFrame {
             avisar("Cadastre e selecione um cliente antes de registrar o pedido.");
             return;
         }
-        if (itensDoNovoPedido.isEmpty()) {
-            avisar("Adicione pelo menos um item ao pedido.");
+        try {
+            registrarNovoPedido(cliente.getIdCliente(), itensDoNovoPedido, campoAntecipado.isSelected());
+        } catch (IllegalArgumentException excecao) {
+            atualizarClientes();
+            atualizarItensDisponiveis();
+            avisar(excecao.getMessage());
             return;
-        }
-
-        BigDecimal totalPedido = calcularTotalNovoPedido();
-        if (cliente.getSaldo().compareTo(totalPedido) < 0) {
-            avisar("Saldo insuficiente. Saldo atual: "
-                    + formatoMoeda.format(cliente.getSaldo())
-                    + ". Total do pedido: " + formatoMoeda.format(totalPedido) + ".");
-            return;
-        }
-
-        synchronized (PEDIDOS) {
-            for (Pedido pedido : PEDIDOS) {
-                if (pedido.nomeCliente.equalsIgnoreCase(cliente.getNomeCliente())
-                        && !pedido.retirado) {
-                    avisar("Este cliente já possui um pedido ativo. Conclua o pedido anterior primeiro.");
-                    return;
-                }
-            }
-
-            if (!TelaClientes.debitarSaldoPorNome(cliente.getNomeCliente(), totalPedido)) {
-                avisar("Não foi possível debitar o saldo. Atualize a lista de clientes e tente novamente.");
-                return;
-            }
-            PEDIDOS.add(new Pedido(
-                    proximoId++, LocalDateTime.now(), copiarItens(itensDoNovoPedido),
-                    campoAntecipado.isSelected(), cliente.getIdCliente(),
-                    cliente.getNomeCliente(), false));
         }
 
         limparNovoPedido();
         atualizarClientes();
         atualizarHub();
         JOptionPane.showMessageDialog(this, "Pedido registrado e enviado para preparação!");
+    }
+
+    /** Valida tudo antes de debitar. A regra usa o ID mesmo quando o nome é editado. */
+    static Pedido registrarNovoPedido(int idCliente, List<ItemPedido> itens, boolean antecipado) {
+        if (itens == null || itens.isEmpty()) {
+            throw new IllegalArgumentException("Adicione pelo menos um item ao pedido.");
+        }
+        synchronized (PEDIDOS) {
+            Cliente cliente = TelaClientes.buscarClientePorId(idCliente);
+            if (cliente == null) {
+                throw new IllegalArgumentException("O cliente não está mais cadastrado.");
+            }
+            if (temPedidoPendente(idCliente)) {
+                throw new IllegalArgumentException(
+                        "Este cliente já possui um pedido ativo. Conclua o pedido anterior primeiro.");
+            }
+            List<TelaCardapios.ItemCardapio> disponiveis = TelaCardapios.listarItensDisponiveis();
+            BigDecimal totalPedido = BigDecimal.ZERO;
+            for (ItemPedido item : itens) {
+                // A referência distingue produtos de mesmo nome. Editar preço ou
+                // disponibilidade cria outro item e exige atualizar o carrinho.
+                if (item == null || !disponiveis.contains(item.origem)) {
+                    throw new IllegalArgumentException(
+                            "Um item foi alterado, removido ou ficou indisponível. Remova-o do pedido e selecione novamente.");
+                }
+                totalPedido = totalPedido.add(item.subtotal());
+            }
+            if (cliente.getSaldo().compareTo(totalPedido) < 0) {
+                throw new IllegalArgumentException("Saldo insuficiente. Saldo atual: R$ "
+                        + cliente.getSaldo().toPlainString().replace('.', ',')
+                        + ". Total do pedido: R$ " + totalPedido.toPlainString().replace('.', ',') + ".");
+            }
+            Pedido pedido = new Pedido(proximoId, LocalDateTime.now(), new ArrayList<ItemPedido>(itens),
+                    antecipado, idCliente, cliente.getNomeCliente(), false);
+            if (!TelaClientes.debitarSaldo(idCliente, totalPedido)) {
+                throw new IllegalArgumentException("O saldo mudou. Confira os dados e tente novamente.");
+            }
+            PEDIDOS.add(pedido);
+            proximoId++;
+            return pedido;
+        }
+    }
+
+    static boolean temPedidoPendente(int idCliente) {
+        synchronized (PEDIDOS) {
+            for (Pedido pedido : PEDIDOS) {
+                if (pedido.idCliente == idCliente && !pedido.retirado) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Mantém a mesma proteção da chave estrangeira ON DELETE RESTRICT do banco. */
+    static boolean temPedidosDoCliente(int idCliente) {
+        synchronized (PEDIDOS) {
+            for (Pedido pedido : PEDIDOS) {
+                if (pedido.idCliente == idCliente) return true;
+            }
+        }
+        return false;
     }
 
     private void concluirPedido() {
@@ -314,9 +377,12 @@ public class TelaPedidos extends JFrame {
                     formatoMoeda.format(item.subtotal())
             });
         }
+        rotuloTotal.setText("Total: " + formatoMoeda.format(calcularTotalNovoPedido()));
     }
 
     private void atualizarHub() {
+        int linha = tabelaPendentes.getSelectedRow();
+        Pedido selecionado = linha < 0 ? null : pedidosVisiveis.get(linha);
         modeloPendentes.setRowCount(0);
         pedidosVisiveis.clear();
         synchronized (PEDIDOS) {
@@ -326,7 +392,7 @@ public class TelaPedidos extends JFrame {
                     modeloPendentes.addRow(new Object[] {
                             pedido.idPedido,
                             formatoData.format(pedido.dataPedido),
-                            pedido.nomeCliente,
+                            nomeAtualDoCliente(pedido),
                             pedido.resumoItens(),
                             formatoMoeda.format(pedido.total()),
                             pedido.antecipado ? "Sim" : "Não"
@@ -334,6 +400,13 @@ public class TelaPedidos extends JFrame {
                 }
             }
         }
+        int indice = pedidosVisiveis.indexOf(selecionado);
+        if (indice >= 0) tabelaPendentes.setRowSelectionInterval(indice, indice);
+    }
+
+    private String nomeAtualDoCliente(Pedido pedido) {
+        Cliente cliente = TelaClientes.buscarClientePorId(pedido.idCliente);
+        return cliente == null ? pedido.nomeCliente : cliente.getNomeCliente();
     }
 
     private void limparNovoPedido() {
@@ -373,22 +446,23 @@ public class TelaPedidos extends JFrame {
         });
     }
 
-    private List<ItemPedido> copiarItens(List<ItemPedido> origem) {
-        return new ArrayList<ItemPedido>(origem);
-    }
-
     private void avisar(String mensagem) {
         JOptionPane.showMessageDialog(this, mensagem, "Atenção", JOptionPane.WARNING_MESSAGE);
     }
 
-    private static class ItemPedido {
+    static class ItemPedido {
+        private final TelaCardapios.ItemCardapio origem;
         private final String nome;
         private final BigDecimal preco;
         private final int quantidade;
 
-        private ItemPedido(String nome, BigDecimal preco, int quantidade) {
-            this.nome = nome;
-            this.preco = preco;
+        ItemPedido(TelaCardapios.ItemCardapio origem, int quantidade) {
+            if (origem == null || origem.getPreco().signum() <= 0 || quantidade < 1 || quantidade > 99) {
+                throw new IllegalArgumentException("Item ou quantidade inválida.");
+            }
+            this.origem = origem;
+            this.nome = origem.getNome();
+            this.preco = origem.getPreco();
             this.quantidade = quantidade;
         }
 
@@ -397,7 +471,7 @@ public class TelaPedidos extends JFrame {
         }
     }
 
-    private static class Pedido {
+    static class Pedido {
         private final int idPedido;
         private final LocalDateTime dataPedido;
         private final List<ItemPedido> itens;
@@ -442,7 +516,7 @@ public class TelaPedidos extends JFrame {
                 if (i > 0) json.append(',');
                 ItemPedido item = itens.get(i);
                 json.append("{\"nome\":\"")
-                        .append(item.nome.replace("\\", "\\\\").replace("\"", "\\\""))
+                        .append(CardapioJson.escapar(item.nome))
                         .append("\",\"preco\":").append(item.preco.toPlainString())
                         .append(",\"quantidade\":").append(item.quantidade).append('}');
             }
