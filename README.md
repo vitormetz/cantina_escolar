@@ -1,2 +1,24 @@
-# cantina_escolar
-Sistema para gerenciamento e agilização de processos de uma cantina escolar - Projeto Hackathon Time 7
+# Cantina Escolar
+
+Projeto desenvolvido pelo Time 7 durante o Hackathon.
+
+## Equipe
+
+- Vitor
+- Augusto Martins
+- Pedro Holler
+
+## Objetivo
+
+Desenvolver um sistema para facilitar e automatizar processos de uma cantina escolar.
+
+
+## Funcionalidades
+
+- Gerenciamento de cardápios
+- Controle de produtos disponíveis e esgotados
+- Registro de pedidos antecipados
+- Gerenciamento e retirada de pedidos
+- Cadastro de clientes
+- Edição de clientes
+- Atualização das informações dos clientes
