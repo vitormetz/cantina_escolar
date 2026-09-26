@@ -1,0 +1,12 @@
+# Arquivos compilados pelo Java
+*.class
+
+# Pastas de saída geradas durante a compilação
+bin/
+out/
+build/
+
+# Configurações locais dos editores
+.vscode/
+.idea/
+
